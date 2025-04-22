@@ -1,8 +1,15 @@
 import pool from "../db.js";
 import bcrypt from "bcrypt";
-
+import { generateToken } from "../utils/generateToken.js";
 const saltRound = 10;
 
+/**
+ * @description Register a new user
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @returns {Object} JSON response containing the newly created user and a token, or an error message
+ * @throws {Error} If there is an error with the database query
+ */
 export const register = async (req, res) => {
 	try {
 		const { username, user_role, phone_number, password } = req.body;
@@ -26,7 +33,12 @@ export const register = async (req, res) => {
 		const newUser = result.rows[0];
 		delete newUser.password_hash;
 
-		return res.status(201).json({ success: true, user: newUser });
+		const token = generateToken(newUser);
+
+		return res.status(201).json({ success: true,
+			user: newUser,
+			token
+		});
 	} catch (err) {
 		console.error(err.message);
 		return res.status(500).json({ success: false, message: "Internal Server Error" });
@@ -34,6 +46,14 @@ export const register = async (req, res) => {
 };
 
 
+
+/**
+ * @description Logs in a user by checking their username and password
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @returns {Object} JSON response containing the logged in user and a token, or an error message
+ * @throws {Error} If there is an error with the database query
+ */
 export const login = async (req, res) => {
 	try {
 		const { username, password } = req.body;
@@ -50,7 +70,10 @@ export const login = async (req, res) => {
 		}
 
 		delete user.password_hash;
-		return res.status(200).json({ success: true, user });
+
+		const token = generateToken(user);
+
+		return res.status(200).json({ success: true, user, token });
 	} catch (err) {
 		console.error(err.message);
 		return res.status(500).json({ success: false, message: "Internal Server Error" });
