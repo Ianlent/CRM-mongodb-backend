@@ -1,83 +1,107 @@
 import pool from "../db.js";
 import bcrypt from "bcrypt";
 import { generateToken } from "../utils/generateToken.js";
-const saltRound = 10;
 
-/**
- * @description Register a new user
- * @param {Object} req - Express request object
- * @param {Object} res - Express response object
- * @returns {Object} JSON response containing the newly created user and a token, or an error message
- * @throws {Error} If there is an error with the database query
- */
+const saltRounds = 10;
+
+// Register a new employee user
 export const register = async (req, res) => {
 	try {
 		const { username, phone_number, password } = req.body;
 
-		// Check if user already exists
-		const userExists = await pool.query("SELECT * FROM users WHERE username = $1", [username]);
-		if (userExists.rows.length > 0) {
+		// Check if username already taken (including deleted accounts)
+		const exists = await pool.query(
+			`SELECT 1 FROM users WHERE username = $1`,
+			[username]
+		);
+		if (exists.rows.length) {
 			return res.status(409).json({ success: false, message: "Username already exists" });
 		}
 
-		const user_role = "employee";
+		const user_role = 'employee';
 
-		// Hash the password
-		const salt = bcrypt.genSaltSync(saltRound);
-		const hashedPassword = bcrypt.hashSync(password, salt);
+		// Hash password
+		const salt = await bcrypt.genSalt(saltRounds);
+		const password_hash = await bcrypt.hash(password, salt);
 
-		// Insert the new user
+		// Insert user (user_status defaults to 'active')
 		const result = await pool.query(
-			"INSERT INTO users (username, user_role, phone_number, password_hash) VALUES ($1, $2, $3, $4) RETURNING *",
-			[username, user_role, phone_number, hashedPassword]
+			`INSERT INTO users (username, user_role, phone_number, password_hash)
+			VALUES ($1, $2, $3, $4)
+			RETURNING
+				user_id,
+				username,
+				user_role,
+				user_status,
+				phone_number,
+				created_at,
+				updated_at`,
+			[username, user_role, phone_number, password_hash]
 		);
 
 		const newUser = result.rows[0];
-		delete newUser.password_hash;
-
-		const token = generateToken(newUser);
-
-		return res.status(201).json({ success: true,
-			user: newUser,
-			token
+		// Generate JWT (only include safe fields)
+		const token = generateToken({
+			user_id: newUser.user_id,
+			username: newUser.username,
+			user_role: newUser.user_role,
+			user_status: newUser.user_status
 		});
+
+		return res.status(201).json({ success: true, user: newUser, token });
 	} catch (err) {
-		console.error(err.message);
+		console.error(err);
 		return res.status(500).json({ success: false, message: "Internal Server Error" });
 	}
 };
 
-
-
-/**
- * @description Logs in a user by checking their username and password
- * @param {Object} req - Express request object
- * @param {Object} res - Express response object
- * @returns {Object} JSON response containing the logged in user and a token, or an error message
- * @throws {Error} If there is an error with the database query
- */
+// Authenticate and login user
 export const login = async (req, res) => {
 	try {
 		const { username, password } = req.body;
-		const result = await pool.query("SELECT * FROM users WHERE username = $1", [username]);
 
-		if (result.rows.length === 0) {
+		// Fetch user with active status and not deleted
+		const result = await pool.query(
+			`SELECT
+				user_id,
+				username,
+				user_role,
+				user_status,
+				phone_number,
+				password_hash,
+				created_at,
+				updated_at
+			FROM users
+			WHERE username = $1
+				AND is_deleted = FALSE
+				AND user_status = 'active'`,
+			[username]
+		);
+
+		if (!result.rows.length) {
 			return res.status(401).json({ success: false, message: "Invalid credentials" });
 		}
 
 		const user = result.rows[0];
-		const isMatch = await bcrypt.compare(password, user.password_hash);
-		if (!isMatch) {
+		const match = await bcrypt.compare(password, user.password_hash);
+		if (!match) {
 			return res.status(401).json({ success: false, message: "Invalid credentials" });
 		}
 
+		// Strip out password_hash
 		delete user.password_hash;
 
-		const token = generateToken(user);
+		// Generate JWT
+		const token = generateToken({
+			user_id: user.user_id,
+			username: user.username,
+			user_role: user.user_role,
+			user_status: user.user_status
+		});
 
 		return res.status(200).json({ success: true, user, token });
 	} catch (err) {
-		console.error(err.message);
+		console.error(err);
 		return res.status(500).json({ success: false, message: "Internal Server Error" });
 	}
 };

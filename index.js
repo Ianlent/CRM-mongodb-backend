@@ -1,10 +1,15 @@
 import express from 'express';
 import cors from 'cors';
+
+//middleware /////////////////////////////////////////////////////////
+import authenticateToken from './middleware/auth/authenticateToken.js';
+import authorizeRoles from './middleware/auth/authorizeRoles.js';
+//////////////////////////////////////////////////////////////////////
+
+//routes //////////////////////////////////
 import users from './routes/users.js';
 import auth from './routes/auth.js';
-import authenticateToken from './middleware/auth/authMiddle.js';
-import authorizeRoles from './middleware/auth/authorizeRoles.js';
-
+///////////////////////////////////////////
 const app = express();
 
 app.use(cors());

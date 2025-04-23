@@ -1,6 +1,6 @@
 import express from "express";
 const router = express.Router();
-import { validateUser } from "../middleware/validators/userValidator.js";
+import { createUserValidation, updateUserValidation } from "../middleware/validators/userValidator.js";
 import { handleValidationErrors } from "../middleware/handleValidationErrors.js";
 import { getAllUsers, getUserById, createUser, updateUserByID, deleteUserByID } from "../controller/userController.js";
 
@@ -10,10 +10,10 @@ router.get("/", getAllUsers);
 router.get("/:id", getUserById);
 
 //POST
-router.post("/", validateUser, handleValidationErrors, createUser);
+router.post("/", createUserValidation, handleValidationErrors, createUser);
 
 //PUT
-router.put("/:id", validateUser, handleValidationErrors, updateUserByID);
+router.put("/:id", updateUserValidation, handleValidationErrors, updateUserByID);
 
 //DELETE
 router.delete("/:id", deleteUserByID);
