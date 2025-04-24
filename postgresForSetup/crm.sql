@@ -99,8 +99,8 @@ CREATE TABLE IF NOT EXISTS order_service (
 CREATE TABLE IF NOT EXISTS expenses (
     expense_id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     amount               INT NOT NULL CHECK (amount > 0),
-    is_deleted           BOOLEAN DEFAULT FALSE,
-    expense_date         TIMESTAMP NOT NULL,
+    is_deleted           BOOLEAN NOT NULL DEFAULT FALSE,
+    expense_date         TIMESTAMP NOT NULL DEFAULT now(),
     expense_description  VARCHAR(50),
     created_at           TIMESTAMP NOT NULL DEFAULT now(),
     updated_at           TIMESTAMP NOT NULL DEFAULT now()

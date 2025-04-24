@@ -10,17 +10,21 @@ import authorizeRoles from './middleware/auth/authorizeRoles.js';
 import auth from './routes/auth.js';
 import users from './routes/users.js';
 import customers from './routes/customers.js';
+import expenses from './routes/expenses.js';
 ///////////////////////////////////////////
 const app = express();
 
 app.use(cors());
 app.use(express.json());
-app.use(authenticateToken);
 
+//Auth entry point
 app.use('/auth', auth);
+
+//protected routes
+app.use(authenticateToken);
 app.use('/api/users', authorizeRoles(['admin']), users)
 app.use('/api/customers', customers) //authorization handled seperately in route for finer control
-
+app.use('/api/expenses', authorizeRoles(['admin', 'manager']), expenses) //more authorization handled seperately in route for finer control
 
 
 app.listen(process.env.PORT, () =>
