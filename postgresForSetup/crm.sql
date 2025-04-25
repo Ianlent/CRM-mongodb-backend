@@ -62,7 +62,10 @@ CREATE TABLE IF NOT EXISTS discounts (
     discount_id     BIGSERIAL PRIMARY KEY,
     required_points INT NOT NULL CHECK (required_points >= 0),
     discount_type   discount_type_enum NOT NULL,
-    amount          INT NOT NULL CHECK (amount > 0)
+    amount          INT NOT NULL CHECK (amount > 0),
+	is_deleted      BOOLEAN DEFAULT FALSE,
+	created_at      TIMESTAMP NOT NULL DEFAULT now(),
+	updated_at      TIMESTAMP NOT NULL DEFAULT now()
 );
 
 -- Orders
@@ -139,6 +142,13 @@ DO $$ BEGIN
         BEFORE UPDATE ON services
         FOR EACH ROW EXECUTE PROCEDURE set_updated_at();
     END IF;
+	IF NOT EXISTS (
+	  SELECT 1 FROM pg_trigger WHERE tgname = 'trg_discounts_updated'
+	) THEN
+	  CREATE TRIGGER trg_discounts_updated
+	    BEFORE UPDATE ON discounts
+	    FOR EACH ROW EXECUTE PROCEDURE set_updated_at();
+	END IF;
     IF NOT EXISTS (
       SELECT 1 FROM pg_trigger WHERE tgname = 'trg_orders_updated'
     ) THEN
