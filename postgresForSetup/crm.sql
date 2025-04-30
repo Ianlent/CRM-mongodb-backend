@@ -5,7 +5,7 @@ CREATE EXTENSION IF NOT EXISTS "pg_trgm";
 -- 1. Enum types
 DO $$ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'user_role_enum') THEN
-        CREATE TYPE user_role_enum AS ENUM ('admin', 'manager', 'employee');
+        CREATE TYPE user_role_enum AS ENUM ('employee', 'manager', 'admin');
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'discount_type_enum') THEN
         CREATE TYPE discount_type_enum AS ENUM ('percent', 'fixed');
@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS discounts (
 CREATE TABLE IF NOT EXISTS orders (
     order_id      UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     customer_id   BIGINT,
-    order_date    TIMESTAMP NOT NULL,
+    order_date    TIMESTAMP NOT NULL DEFAULT now(),
     handler_id    BIGINT,
     order_status  order_status_enum NOT NULL DEFAULT 'pending',
     is_deleted    BOOLEAN DEFAULT FALSE,
@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS order_service (
     order_id       UUID NOT NULL,
     service_id     BIGINT,
     number_of_unit INT NOT NULL CHECK (number_of_unit > 0),
+	total_price    INT NOT NULL CHECK (total_price > 0) DEFAULT 1,
     PRIMARY KEY (order_id, service_id),
     CONSTRAINT fk_order FOREIGN KEY (order_id)
         REFERENCES orders (order_id) ON DELETE CASCADE ON UPDATE CASCADE,
@@ -103,9 +104,9 @@ CREATE TABLE IF NOT EXISTS order_service (
 CREATE TABLE IF NOT EXISTS expenses (
     expense_id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     amount               INT NOT NULL CHECK (amount > 0),
-    is_deleted           BOOLEAN NOT NULL DEFAULT FALSE,
     expense_date         TIMESTAMP NOT NULL DEFAULT now(),
     expense_description  VARCHAR(50),
+    is_deleted           BOOLEAN NOT NULL DEFAULT FALSE,
     created_at           TIMESTAMP NOT NULL DEFAULT now(),
     updated_at           TIMESTAMP NOT NULL DEFAULT now()
 );
@@ -119,7 +120,19 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- 4. Attach triggers for audit
+-- 4. New trigger function to update orders.updated_at when updating order_service
+CREATE OR REPLACE FUNCTION update_order_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  -- Update the orders table's updated_at column whenever a related row in order_service is updated
+  UPDATE orders
+  SET updated_at = now()  -- Set the updated_at to the current timestamp
+  WHERE order_id = NEW.order_id; -- Use the order_id from the updated order_service row
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 5. Attach triggers for audit
 DO $$ BEGIN
     IF NOT EXISTS (
       SELECT 1 FROM pg_trigger WHERE tgname = 'trg_customers_updated'
@@ -163,13 +176,43 @@ DO $$ BEGIN
         BEFORE UPDATE ON expenses
         FOR EACH ROW EXECUTE PROCEDURE set_updated_at();
     END IF;
+
+	-- Trigger for update (when a row in order_service is updated)
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger WHERE tgname = 'trg_order_service_updated'
+    ) THEN
+        CREATE TRIGGER trg_order_service_updated
+            AFTER UPDATE ON order_service
+            FOR EACH ROW
+            EXECUTE FUNCTION update_order_updated_at();
+    END IF;
+
+    -- Trigger for insert (when a new row is inserted into order_service)
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger WHERE tgname = 'trg_order_service_inserted'
+    ) THEN
+        CREATE TRIGGER trg_order_service_inserted
+            AFTER INSERT ON order_service
+            FOR EACH ROW
+            EXECUTE FUNCTION update_order_updated_at();
+    END IF;
+
+    -- Trigger for delete (when a row is deleted from order_service)
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger WHERE tgname = 'trg_order_service_deleted'
+    ) THEN
+        CREATE TRIGGER trg_order_service_deleted
+            AFTER DELETE ON order_service
+            FOR EACH ROW
+            EXECUTE FUNCTION update_order_updated_at();
+    END IF;
 END $$;
 
--- 5. Indexes for performance on date columns
+-- 6. Indexes for performance on date columns
 CREATE INDEX IF NOT EXISTS idx_orders_order_date     ON orders(order_date);
 CREATE INDEX IF NOT EXISTS idx_expenses_expense_date ON expenses(expense_date);
 
--- 6. Indexes for performance on multiple columns
+-- 7. Indexes for performance on multiple columns
 CREATE INDEX idx_customers_search_lower
   ON customers (
     lower(phone_number),
@@ -177,6 +220,6 @@ CREATE INDEX idx_customers_search_lower
     lower(last_name)
   );
 
--- 7. Indexes for partial matching
+-- 8. Indexes for partial matching
 CREATE INDEX idx_services_service_name_trgm ON services USING gin (service_name gin_trgm_ops);
 
