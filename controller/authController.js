@@ -1,6 +1,6 @@
-import pool from "../db.js";
 import bcrypt from "bcrypt";
 import { generateToken } from "../utils/generateToken.js";
+import User from "../models/user.model.js"; // Import the Mongoose User model
 
 const saltRounds = 10;
 
@@ -10,44 +10,57 @@ export const register = async (req, res) => {
 		const { username, phone_number, password } = req.body;
 
 		// Check if username already taken (including deleted accounts)
-		const exists = await pool.query(
-			`SELECT 1 FROM users WHERE username = $1`,
-			[username]
-		);
-		if (exists.rows.length) {
-			return res.status(409).json({ success: false, message: "Username already exists" });
+		// Mongoose findOne directly checks existence
+		const existingUser = await User.findOne({ username: username });
+		if (existingUser) {
+			return res
+				.status(409)
+				.json({ success: false, message: "Username already exists" });
 		}
 
-		const user_role = 'employee';
+		const userRole = "employee"; // Renamed to userRole for consistency with Mongoose model
 
 		// Hash password
 		const salt = await bcrypt.genSalt(saltRounds);
-		const password_hash = await bcrypt.hash(password, salt);
+		const passwordHash = await bcrypt.hash(password, salt); // Renamed to passwordHash
 
-		// Insert user (user_status defaults to 'active')
-		const result = await pool.query(
-			`INSERT INTO users (username, user_role, phone_number, password_hash)
-			VALUES ($1, $2, $3, $4)
-			RETURNING
-				user_id,
-				username,
-				user_role,
-				phone_number`,
-			[username, user_role, phone_number, password_hash]
-		);
-
-		const newUser = result.rows[0];
-		// Generate JWT (only include safe fields)
-		const token = generateToken({
-			user_id: newUser.user_id,
-			username: newUser.username,
-			user_role: newUser.user_role
+		// Create and insert user using Mongoose model
+		const newUser = new User({
+			username,
+			userRole, // Use userRole as per Mongoose schema
+			phoneNumber: phone_number, // Map phone_number to phoneNumber
+			passwordHash,
+			// userStatus defaults to 'active' as per schema
+			// isDeleted defaults to 'false' as per schema
 		});
 
-		return res.status(201).json({ success: true, user: newUser, token });
+		const savedUser = await newUser.save();
+
+		// Prepare user object for token (excluding passwordHash)
+		const userForToken = {
+			_id: savedUser._id, // Use MongoDB's _id
+			username: savedUser.username,
+			userRole: savedUser.userRole,
+		};
+
+		// Generate JWT
+		const token = generateToken(userForToken);
+
+		// Return a clean user object (without passwordHash)
+		const responseUser = savedUser.toObject(); // Convert Mongoose document to plain JS object
+		delete responseUser.passwordHash; // Remove passwordHash before sending
+		delete responseUser.isDeleted; // Optionally remove isDeleted if not relevant for response
+		delete responseUser.createdAt; // Optionally remove audit fields if not relevant for response
+		delete responseUser.updatedAt; // Optionally remove audit fields if not relevant for response
+
+		return res
+			.status(201)
+			.json({ success: true, user: responseUser, token });
 	} catch (err) {
 		console.error(err);
-		return res.status(500).json({ success: false, message: "Internal Server Error" });
+		return res
+			.status(500)
+			.json({ success: false, message: "Internal Server Error" });
 	}
 };
 
@@ -57,42 +70,50 @@ export const login = async (req, res) => {
 		const { username, password } = req.body;
 
 		// Fetch user with active status and not deleted
-		const result = await pool.query(
-			`SELECT
-				user_id,
-				username,
-				user_role,
-				password_hash
-			FROM users
-			WHERE username = $1
-				AND is_deleted = FALSE
-				AND user_status = 'active'`,
-			[username]
-		);
-
-		if (!result.rows.length) {
-			return res.status(401).json({ success: false, message: "Invalid credentials" });
-		}
-
-		const user = result.rows[0];
-		const match = await bcrypt.compare(password, user.password_hash);
-		if (!match) {
-			return res.status(401).json({ success: false, message: "Invalid credentials" });
-		}
-
-		// Strip out password_hash
-		delete user.password_hash;
-
-		// Generate JWT
-		const token = generateToken({
-			user_id: user.user_id,
-			username: user.username,
-			user_role: user.user_role,
+		const user = await User.findOne({
+			username: username,
+			isDeleted: false,
+			userStatus: "active",
 		});
 
-		return res.status(200).json({ success: true, user, token });
+		if (!user) {
+			return res
+				.status(401)
+				.json({ success: false, message: "Invalid credentials" });
+		}
+
+		// Compare password
+		const match = await bcrypt.compare(password, user.passwordHash); // Use user.passwordHash
+		if (!match) {
+			return res
+				.status(401)
+				.json({ success: false, message: "Invalid credentials" });
+		}
+
+		// Prepare user object for token (excluding passwordHash)
+		const userForToken = {
+			_id: user._id, // Use MongoDB's _id
+			username: user.username,
+			userRole: user.userRole,
+		};
+
+		// Generate JWT
+		const token = generateToken(userForToken);
+
+		// Return a clean user object (without passwordHash)
+		const responseUser = user.toObject(); // Convert Mongoose document to plain JS object
+		delete responseUser.passwordHash; // Remove passwordHash before sending
+		delete responseUser.isDeleted; // Optionally remove isDeleted
+		delete responseUser.createdAt; // Optionally remove audit fields
+		delete responseUser.updatedAt; // Optionally remove audit fields
+
+		return res
+			.status(200)
+			.json({ success: true, user: responseUser, token });
 	} catch (err) {
 		console.error(err);
-		return res.status(500).json({ success: false, message: "Internal Server Error" });
+		return res
+			.status(500)
+			.json({ success: false, message: "Internal Server Error" });
 	}
 };

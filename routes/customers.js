@@ -1,10 +1,20 @@
 import express from "express";
-import { getAllCustomers, getCustomerById, getCustomerByPhoneFirstLast, createCustomer, updateCustomerByID, deleteCustomerByID } from "../controller/customerController.js";
-import { createCustomerValidation, updateCustomerValidation } from "../middleware/validators/customerValidator.js";
+import {
+	getAllCustomers,
+	getCustomerById,
+	getCustomerByPhoneFirstLast,
+	createCustomer,
+	updateCustomerByID,
+	deleteCustomerByID,
+} from "../controller/customerController.js";
+import {
+	createCustomerValidation,
+	updateCustomerValidation,
+} from "../middleware/validators/customerValidator.js";
 import { handleValidationErrors } from "../middleware/handleValidationErrors.js";
 
 //auth middleware /////////////////////////////////////////////////////////
-import authorizeRoles from '../middleware/auth/authorizeRoles.js';
+import authorizeRoles from "../middleware/auth/authorizeRoles.js";
 //////////////////////////////////////////////////////////////////////
 const router = express.Router();
 
@@ -13,16 +23,25 @@ router.get("/", getAllCustomers);
 
 router.get("/search", getCustomerByPhoneFirstLast);
 
-router.get("/:id", getCustomerById)
+router.get("/:id", getCustomerById);
 
 // //post
-router.post("/", createCustomerValidation, handleValidationErrors, createCustomer);
+router.post(
+	"/",
+	createCustomerValidation,
+	handleValidationErrors,
+	createCustomer
+);
 
 // //put
-router.put("/:id", updateCustomerValidation, handleValidationErrors, updateCustomerByID);
+router.put(
+	"/:id",
+	updateCustomerValidation,
+	handleValidationErrors,
+	updateCustomerByID
+);
 
 // //delete
-router.delete("/:id", authorizeRoles(['admin']), deleteCustomerByID);
+router.delete("/:id", authorizeRoles(["admin"]), deleteCustomerByID);
 
 export default router;
-

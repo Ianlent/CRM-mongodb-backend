@@ -1,596 +1,851 @@
-import pool from "../db.js";
-import dotenv from "dotenv";
-dotenv.config();
-const magnificationFactor = process.env.MAGNIFICATION_FACTOR;
+import Order from "../models/order.model.js";
+import Customer from "../models/customer.model.js"; // Needed for customer point updates
+import User from "../models/user.model.js"; // Needed for handler existence check
+import Service from "../models/service.model.js"; // Needed for service price check
+import Discount from "../models/discount.model.js"; // Needed for discount details
+
+// Dotenv should ideally be configured once in your main app entry point (e.g., index.js)
+// If MAGNIFICATION_FACTOR is used for calculation, ensure it's converted to a number.
+const magnificationFactor = parseFloat(process.env.MAGNIFICATION_FACTOR || "1");
 
 export const getAllOrders = async (req, res) => {
 	try {
-		const { page = 1, limit = 10 } = req.query;
-		const offset = (page - 1) * limit;
-		const result = await pool.query(
-			`
-			SELECT 
-				o.order_id,
-				o.customer_id,
-				o.order_date,
-				o.handler_id,
-				o.order_status,
-				o.discount_id,
-				d.discount_type,
-				d.amount AS discount_amount,
-				SUM(os.total_price) AS total_order_price
-			FROM orders o
-			LEFT JOIN order_service os ON o.order_id = os.order_id
-			LEFT JOIN discounts d ON o.discount_id = d.discount_id
-			WHERE o.is_deleted = FALSE
-			GROUP BY o.order_id, o.customer_id, o.order_date, o.handler_id, o.order_status, o.discount_id, d.discount_type, d.amount
-			ORDER BY o.order_date DESC
-			LIMIT $1 OFFSET $2;
-		`,
-			[limit, offset]
-		);
-		const countResult = await pool.query(`
-			SELECT COUNT(*) FROM orders WHERE is_deleted = FALSE;
-		`);
-		const totalCount = parseInt(countResult.rows[0].count);
+		const page = parseInt(req.query.page) || 1;
+		const limit = parseInt(req.query.limit) || 10;
+		const skip = (page - 1) * limit;
 
-		res.status(200).json({
+		// Aggregation pipeline to calculate total_order_price and filter
+		const pipeline = [
+			{ $match: { isDeleted: false } }, // Filter out soft-deleted orders
+			{ $sort: { orderDate: -1 } }, // Sort by order_date DESC
+			{ $skip: skip }, // Pagination
+			{ $limit: limit }, // Pagination
+			{
+				$project: {
+					// Select and rename fields, calculate total price
+					_id: 0, // Exclude _id from the root document as it will be orderId
+					orderId: "$_id",
+					customerId: "$customerId",
+					customerInfo: "$customerInfo", // Embedded customer details
+					orderDate: "$orderDate",
+					handlerId: "$handlerId",
+					handlerInfo: "$handlerInfo", // Embedded handler details
+					orderStatus: "$orderStatus",
+					discountId: "$discountId",
+					discountInfo: "$discountInfo", // Embedded discount details
+					services: "$services", // Keep embedded services for client if needed
+					total_order_price: { $sum: "$services.totalPrice" }, // Calculate total price
+				},
+			},
+		];
+
+		const orders = await Order.aggregate(pipeline);
+
+		const totalCount = await Order.countDocuments({ isDeleted: false });
+
+		return res.status(200).json({
 			success: true,
-			data: result.rows,
+			data: orders,
 			pagination: {
 				total_record: totalCount,
-				page: parseInt(page),
-				limit: parseInt(limit),
+				page: page,
+				limit: limit,
+				total_pages: Math.ceil(totalCount / limit),
 			},
 		});
 	} catch (err) {
-		res.status(500).json({ error: "Failed to fetch orders" });
+		console.error("Error in getAllOrders:", err);
+		return res
+			.status(500)
+			.json({ success: false, message: "Failed to fetch orders" });
 	}
 };
 
 export const getCurrentOrdersForHandler = async (req, res) => {
-	const { handler_id } = req.params;
-	const user_id = req.user?.user_id;
+	const { handler_id } = req.params; // Note: req.params.handler_id is a string, convert to ObjectId if needed for direct comparison
+	const user_id = req.user?._id; // Access _id from the authenticated user object
+	const user_role = req.user?.userRole; // Access userRole
+
 	try {
-		if (user_id !== handler_id && req.user?.user_role !== "admin") {
-			return res.status(401).json({ success: false, message: "Unauthorized" });
+		// Ensure handler_id from params is a valid ObjectId
+		if (!mongoose.Types.ObjectId.isValid(handler_id)) {
+			return res.status(400).json({
+				success: false,
+				message: "Invalid handler ID format.",
+			});
+		}
+		const handlerObjectId = new mongoose.Types.ObjectId(handler_id);
+
+		// Authorization check
+		if (
+			!user_id ||
+			(!user_id.equals(handlerObjectId) && user_role !== "admin")
+		) {
+			return res
+				.status(401)
+				.json({ success: false, message: "Unauthorized" });
 		}
 
-		// Check if handler_id exists
-		const handlerCheckResult = await pool.query(
-			`SELECT 1 FROM users WHERE user_id = $1`, [handler_id]
+		// Check if handler_id exists in the users collection
+		const handlerExists = await User.findById(handlerObjectId).select(
+			"_id"
 		);
-		if (handlerCheckResult.rows.length === 0) {
-			return res.status(404).json({ success: false, message: "Handler not found" });
+		if (!handlerExists) {
+			return res
+				.status(404)
+				.json({ success: false, message: "Handler not found" });
 		}
 
-		const result = await pool.query(
-			`
-			SELECT 
-				o.order_id,
-				o.customer_id,
-				o.order_date,
-				o.handler_id,
-				o.order_status,
-				o.discount_id,
-				d.discount_type,
-				d.amount AS discount_amount,
-				SUM(os.total_price) AS total_order_price
-			FROM orders o
-			LEFT JOIN order_service os ON o.order_id = os.order_id
-			LEFT JOIN discounts d ON o.discount_id = d.discount_id
-			WHERE o.is_deleted = FALSE AND o.handler_id = $1 AND o.order_status NOT IN ('completed', 'cancelled')
-			GROUP BY o.order_id, o.customer_id, o.order_date, o.handler_id, o.order_status, o.discount_id, d.discount_type, d.amount
-			ORDER BY o.order_date DESC;
-		`,
-			[handler_id]
-		);
+		const pipeline = [
+			{
+				$match: {
+					isDeleted: false,
+					handlerId: handlerObjectId, // Match handlerId
+					orderStatus: { $nin: ["completed", "cancelled"] }, // Not in completed or cancelled
+				},
+			},
+			{ $sort: { orderDate: -1 } },
+			{
+				$project: {
+					_id: 0,
+					orderId: "$_id",
+					customerId: "$customerId",
+					customerInfo: "$customerInfo",
+					orderDate: "$orderDate",
+					handlerId: "$handlerId",
+					handlerInfo: "$handlerInfo",
+					orderStatus: "$orderStatus",
+					discountId: "$discountId",
+					discountInfo: "$discountInfo",
+					total_order_price: { $sum: "$services.totalPrice" }, // Sum embedded services
+					services: 0, // Exclude full services array if not needed in summary
+				},
+			},
+		];
 
-		if (result.rows.length === 0) {
-			return res.status(200).json({ success: true, data: [], message: 'No orders found being processed by the handler' });
+		const orders = await Order.aggregate(pipeline);
+
+		if (orders.length === 0) {
+			return res.status(200).json({
+				success: true,
+				data: [],
+				message: "No orders found being processed by the handler",
+			});
 		}
 
-		res.status(200).json({ success: true, data: result.rows });
-	} catch(err) {
-		res.status(500).json({ error: "Failed to fetch orders" });
+		return res.status(200).json({ success: true, data: orders });
+	} catch (err) {
+		console.error("Error in getCurrentOrdersForHandler:", err);
+		return res
+			.status(500)
+			.json({ success: false, message: "Failed to fetch orders" });
 	}
-}
+};
 
 export const getOrdersByDateRange = async (req, res) => {
-	const { start, end } = req.query;
+	let { start, end } = req.query;
+
 	if (!start && !end) {
-		return res
-			.status(400)
-			.json({ success: false, message: "Start or end date is required." });
+		return res.status(400).json({
+			success: false,
+			message: "Start or end date is required.",
+		});
 	}
+
 	let startDate = start ? new Date(start) : null;
 	let endDate = end ? new Date(end) : null;
-	if (startDate > endDate) {
-		return res
-			.status(400)
-			.json({
-				success: false,
-				message: "Start date cannot be after end date.",
-			});
-	}
-	if ((startDate && isNaN(startDate)) || (endDate && isNaN(endDate))) {
+
+	if (
+		(startDate && isNaN(startDate.getTime())) ||
+		(endDate && isNaN(endDate.getTime()))
+	) {
 		return res
 			.status(400)
 			.json({ success: false, message: "Invalid date format." });
 	}
+
+	if (startDate && endDate && startDate > endDate) {
+		return res.status(400).json({
+			success: false,
+			message: "Start date cannot be after end date.",
+		});
+	}
+
+	// Adjust dates for full day range
+	if (startDate) startDate.setHours(0, 0, 0, 0);
+	if (endDate) endDate.setHours(23, 59, 59, 999);
+
+	// Default dates if only one is provided
 	if (startDate && !endDate) {
-		endDate = new Date();
+		endDate = new Date(); // Today
+		endDate.setHours(23, 59, 59, 999);
 	}
+
 	if (!startDate && endDate) {
-		startDate = new Date("1970-01-01");
+		startDate = new Date("1970-01-01T00:00:00Z"); // Epoch
 	}
-	startDate.setHours(0, 0, 0, 0);
-	endDate.setHours(23, 59, 59, 999);
+
+	const matchQuery = {
+		isDeleted: false,
+		orderDate: {
+			// Use Mongoose's date range query operators
+			...(startDate && { $gte: startDate }), // Greater than or equal to start date
+			...(endDate && { $lte: endDate }), // Less than or equal to end date
+		},
+	};
+
 	try {
-		const result = await pool.query(
-			`
-			SELECT 
-				o.order_id,
-				o.customer_id,
-				o.order_date,
-				o.handler_id,
-				o.order_status,
-				o.discount_id,
-				d.discount_type,
-				d.amount AS discount_amount,
-				SUM(os.total_price) AS total_order_price
-			FROM orders o
-			LEFT JOIN order_service os ON o.order_id = os.order_id
-			LEFT JOIN discounts d ON o.discount_id = d.discount_id
-			WHERE o.is_deleted = FALSE AND o.order_date BETWEEN $1 AND $2
-			GROUP BY o.order_id, o.customer_id, o.order_date, o.handler_id, o.order_status, o.discount_id, d.discount_type, d.amount
-			ORDER BY o.order_date DESC;
-		`,
-			[startDate, endDate]
-		);
-		res.status(200).json({ success: true, data: result.rows });
+		const pipeline = [
+			{ $match: matchQuery },
+			{ $sort: { orderDate: -1 } },
+			{
+				$project: {
+					_id: 0,
+					orderId: "$_id",
+					customerId: "$customerId",
+					customerInfo: "$customerInfo",
+					orderDate: "$orderDate",
+					handlerId: "$handlerId",
+					handlerInfo: "$handlerInfo",
+					orderStatus: "$orderStatus",
+					discountId: "$discountId",
+					discountInfo: "$discountInfo",
+					total_order_price: { $sum: "$services.totalPrice" },
+					services: 0, // Exclude full services array if not needed in summary
+				},
+			},
+		];
+
+		const orders = await Order.aggregate(pipeline);
+		return res.status(200).json({ success: true, data: orders });
 	} catch (err) {
-		res.status(500).json({ error: "Failed to fetch orders" });
+		console.error("Error in getOrdersByDateRange:", err);
+		return res
+			.status(500)
+			.json({ success: false, message: "Failed to fetch orders" });
 	}
 };
 
 export const getOrderDetailsById = async (req, res) => {
 	const { id } = req.params;
-	const client = await pool.connect();
 	try {
-		await client.query("BEGIN");
-		const orderResult = await client.query(
-			`SELECT
-				o.order_id,
-				o.customer_id,
-				o.order_date,
-				o.handler_id,
-				o.order_status,
-				o.discount_id,
-				d.discount_type,
-				d.amount AS discount_amount,
-				SUM(os.total_price) AS total_order_price
-			FROM orders o
-			LEFT JOIN order_service os ON o.order_id = os.order_id
-			LEFT JOIN discounts d ON o.discount_id = d.discount_id
-			WHERE o.is_deleted = FALSE AND o.order_id = $1
-			GROUP BY o.order_id, o.customer_id, o.order_date, o.handler_id, o.order_status, o.discount_id, d.discount_type, d.amount
-			`,
-			[id]
+		// Ensure id is a valid ObjectId
+		if (!mongoose.Types.ObjectId.isValid(id)) {
+			return res
+				.status(400)
+				.json({ success: false, message: "Invalid order ID format." });
+		}
+
+		// Find the order by its _id and ensure it's not deleted
+		const order = await Order.findOne({ _id: id, isDeleted: false });
+
+		if (!order) {
+			return res
+				.status(404)
+				.json({ success: false, message: "Order not found" });
+		}
+
+		// Since customerInfo, handlerInfo, discountInfo, and services are embedded,
+		// we can directly access them from the fetched order document.
+		// We will calculate total_order_price on the fly.
+		const totalOrderPrice = order.services.reduce(
+			(sum, service) => sum + service.totalPrice,
+			0
 		);
 
-		if (orderResult.rows.length === 0)
-			return res.status(404).json({ error: "Order not found" });
+		const responseData = order.toObject(); // Convert to plain object
+		delete responseData.isDeleted; // Optional: clean up response
 
-		const servicesResult = await client.query(
-			`SELECT os.service_id, s.service_name, os.number_of_unit, os.total_price AS service_total_price
-			FROM order_service os
-			LEFT JOIN services s ON os.service_id = s.service_id
-			WHERE os.order_id = $1`,
-			[id]
-		);
+		// Add calculated total_order_price
+		responseData.total_order_price = totalOrderPrice;
 
-		res.json({
-			...orderResult.rows[0],
-			services: servicesResult.rows,
-		});
+		return res.status(200).json({ success: true, data: responseData });
 	} catch (err) {
-		console.log(err);
-		await client.query("ROLLBACK");
-		res.status(500).json({ error: "Failed to fetch order" });
-	} finally {
-		client.release();
+		console.error("Error in getOrderDetailsById:", err);
+		return res
+			.status(500)
+			.json({ success: false, message: "Failed to fetch order details" });
 	}
 };
 
 export const createOrder = async (req, res) => {
-	const { customer_id, handler_id, discount_id, services } = req.body;
-	const client = await pool.connect();
+	const { customerId, handlerId, discountId, services } = req.body;
+	const session = await mongoose.startSession(); // Start a session for transaction
+	session.startTransaction(); // Begin transaction
 
 	try {
-		// Begin transaction
-		await client.query("BEGIN");
-
-		// 1. Check if a discount is applied
-		if (discount_id) {
-			// 1.1 fetch customer's points
-			const customerRes = await client.query(
-				`SELECT points FROM customers WHERE customer_id = $1 FOR UPDATE`,
-				[customer_id]
-			);
-			if (customerRes.rowCount === 0) {
-				throw new Error("Customer not found");
-			}
-
-			const customerPoints = customerRes.rows[0].points;
-
-			// 1.2 fetch discount's required points
-			const discountRes = await client.query(
-				`SELECT required_points FROM discounts WHERE discount_id = $1 AND is_deleted = FALSE`,
-				[discount_id]
-			);
-			if (discountRes.rowCount === 0) {
-				throw new Error("Discount not found");
-			}
-			const requiredPoints = discountRes.rows[0].required_points;
-			console.log("required points" + requiredPoints);
-
-			// 1.3 compare
-			if (customerPoints < requiredPoints) {
-				throw new Error("Customer does not have enough points for discount");
-			}
-			// 1.4 subtract customer points
-			await client.query(
-				`UPDATE customers SET points = points - $1 WHERE customer_id = $2`,
-				[requiredPoints, customer_id]
-			);
+		// 1. Validate incoming IDs and fetch necessary data
+		if (!mongoose.Types.ObjectId.isValid(customerId)) {
+			throw new Error("Invalid customer ID format.");
 		}
-		// 2. Insert the order
-		const orderRes = await client.query(
-			`INSERT INTO orders (customer_id, handler_id, discount_id)
-			VALUES ($1, $2, $3)
-			RETURNING order_id, customer_id, order_date, handler_id, order_status, discount_id`,
-			[customer_id, handler_id, discount_id || null]
-		);
+		const customer = await Customer.findById(customerId).session(session);
+		if (!customer || customer.isDeleted) {
+			throw new Error("Customer not found or deleted.");
+		}
 
-		const order_id = orderRes.rows[0].order_id;
+		let handler = null;
+		if (handlerId) {
+			if (!mongoose.Types.ObjectId.isValid(handlerId)) {
+				throw new Error("Invalid handler ID format.");
+			}
+			handler = await User.findById(handlerId).session(session);
+			if (!handler || handler.isDeleted) {
+				throw new Error("Handler not found or deleted.");
+			}
+		}
 
-		// 3. Insert each service into order_service table
+		let discount = null;
+		if (discountId) {
+			if (!mongoose.Types.ObjectId.isValid(discountId)) {
+				throw new Error("Invalid discount ID format.");
+			}
+			discount = await Discount.findById(discountId).session(session);
+			if (!discount || discount.isDeleted) {
+				throw new Error("Discount not found or deleted.");
+			}
+
+			// 1.1 Customer points check and update
+			if (customer.points < discount.requiredPoints) {
+				throw new Error(
+					"Customer does not have enough points for discount."
+				);
+			}
+			// Decrement customer points
+			customer.points -= discount.requiredPoints;
+			await customer.save({ session }); // Save within the transaction
+		}
+
+		// 2. Prepare embedded services
+		const embeddedServices = [];
 		for (const svc of services) {
-			// 3.1 Check if service exists
-			const serviceRes = await client.query(
-				`SELECT 1 FROM services WHERE service_id = $1 AND is_deleted = FALSE`,
-				[svc.service_id]
-			);
-
-			// 3.2 If service does not exist, throw error
-			if (serviceRes.rowCount === 0) {
-				throw new Error(`Service with ID ${svc.service_id} does not exist`);
+			if (!mongoose.Types.ObjectId.isValid(svc.serviceId)) {
+				throw new Error(
+					`Invalid service ID format for service: ${svc.serviceId}`
+				);
 			}
-
-			// 3.3 Insert service into order_service
-			await client.query(
-				`INSERT INTO order_service (order_id, service_id, number_of_unit, total_price)
-				SELECT $1, $2, $3, $3 * s.service_price_per_unit
-				FROM services s
-				WHERE s.service_id = $2`,
-				[order_id, svc.service_id, svc.number_of_unit]
+			const serviceDoc = await Service.findById(svc.serviceId).session(
+				session
 			);
+			if (!serviceDoc || serviceDoc.isDeleted) {
+				throw new Error(
+					`Service with ID ${svc.serviceId} not found or deleted.`
+				);
+			}
+			// Calculate total_price based on service_price_per_unit at the time of order creation
+			const totalPrice =
+				svc.numberOfUnit * serviceDoc.servicePricePerUnit;
+			embeddedServices.push({
+				serviceId: serviceDoc._id,
+				serviceName: serviceDoc.serviceName,
+				serviceUnit: serviceDoc.serviceUnit,
+				pricePerUnit: serviceDoc.servicePricePerUnit, // Store the price at time of order
+				numberOfUnit: svc.numberOfUnit,
+				totalPrice: totalPrice,
+			});
 		}
 
-		// Commit transaction
-		await client.query("COMMIT");
+		// 3. Create the order document
+		const newOrder = new Order({
+			customerId: customer._id,
+			customerInfo: {
+				// Embedding customer details
+				firstName: customer.firstName,
+				lastName: customer.lastName,
+				phoneNumber: customer.phoneNumber,
+			},
+			handlerId: handler ? handler._id : null,
+			handlerInfo: handler
+				? {
+						// Embedding handler details
+						username: handler.username,
+						userRole: handler.userRole,
+				  }
+				: null,
+			discountId: discount ? discount._id : null,
+			discountInfo: discount
+				? {
+						// Embedding discount details
+						discountType: discount.discountType,
+						amount: discount.amount,
+				  }
+				: null,
+			services: embeddedServices,
+			orderStatus: "pending", // Default status
+		});
 
-		// Respond with the created order
-		res.status(201).json({ message: "Order created", order: orderRes.rows[0] });
+		const savedOrder = await newOrder.save({ session }); // Save within the transaction
+
+		await session.commitTransaction(); // Commit transaction
+		session.endSession(); // End session
+
+		const responseOrder = savedOrder.toObject();
+		delete responseOrder.isDeleted;
+		delete responseOrder.createdAt;
+		delete responseOrder.updatedAt;
+
+		return res.status(201).json({
+			success: true,
+			message: "Order created successfully",
+			order: responseOrder,
+		});
 	} catch (err) {
-		// Rollback transaction in case of error
-		await client.query("ROLLBACK");
+		await session.abortTransaction(); // Rollback transaction
+		session.endSession(); // End session
 
-		// Log error for debugging purposes
 		console.error("Error creating order:", err);
-
-		// Return error response
-		res
-			.status(500)
-			.json({ error: "Failed to create order", details: err.message });
-	} finally {
-		// Release the database client
-		client.release();
+		return res.status(500).json({
+			success: false,
+			message: "Failed to create order",
+			details: err.message,
+		});
 	}
 };
 
 export const updateOrderStatus = async (req, res) => {
 	const { id } = req.params;
-	const { order_status } = req.body;
-	const user_role = req.user?.user_role;
+	const { orderStatus } = req.body; // Use camelCase
+	const userRole = req.user?.userRole;
+
 	try {
-		// 1. Check if order exists and is not deleted
-		const pastStatus = await pool.query(
-			`SELECT order_status FROM orders WHERE order_id = $1 AND is_deleted = FALSE`,
-			[id]
-		)
-
-		if (pastStatus.rows.length === 0) {
-			return res.status(404).json({ error: "Order not found or already deleted" });
+		if (!mongoose.Types.ObjectId.isValid(id)) {
+			return res
+				.status(400)
+				.json({ success: false, message: "Invalid order ID format." });
 		}
 
-		// 2. Check if order is already closed and allow admin bypass
-		if (
-			user_role !== "admin" &&
-			(pastStatus.rows[0].order_status === "completed" || pastStatus.rows[0].order_status === "cancelled")
-		) {
-			return res.status(401).json({ success: false, message: "Unauthorized to change order status, order is already closed" });
-		}
-
-		// 3. Update order
-		const result = await pool.query(
-			`UPDATE orders SET
-				order_status = $1
-			WHERE order_id = $2
-			RETURNING order_id, order_status`,
-			[order_status, id]
+		// Find the current order status
+		const order = await Order.findOne({ _id: id, isDeleted: false }).select(
+			"orderStatus"
 		);
-	
-		if (result.rows.length === 0) {
-			return res.status(404).json({ error: "Order not found" });
-		}
-	
-		res.json({ message: "Order status updated", order: result.rows[0] });
-	} catch (err) {
-		console.error(err.message);
-		res.status(500).json({ error: "Failed to update order status" });
-	}
-}
 
+		if (!order) {
+			return res.status(404).json({
+				success: false,
+				message: "Order not found or already deleted",
+			});
+		}
+
+		// Check if order is already closed and allow admin bypass
+		if (
+			userRole !== "admin" &&
+			(order.orderStatus === "completed" ||
+				order.orderStatus === "cancelled")
+		) {
+			return res.status(401).json({
+				success: false,
+				message:
+					"Unauthorized to change order status, order is already closed",
+			});
+		}
+
+		// Update order status
+		const updatedOrder = await Order.findOneAndUpdate(
+			{ _id: id, isDeleted: false },
+			{ $set: { orderStatus: orderStatus } },
+			{ new: true, runValidators: true } // Run validators to ensure status is valid enum
+		).select("_id orderStatus");
+
+		if (!updatedOrder) {
+			return res
+				.status(404)
+				.json({ success: false, message: "Order not found" });
+		}
+
+		return res.json({
+			success: true,
+			message: "Order status updated",
+			order: updatedOrder,
+		});
+	} catch (err) {
+		console.error("Error updating order status:", err);
+		return res
+			.status(500)
+			.json({ success: false, message: "Failed to update order status" });
+	}
+};
 
 export const updateOrderByID = async (req, res) => {
 	try {
 		const { id } = req.params;
-		const { order_status, handler_id, discount_id } = req.body;
-		let fields = [];
-		let values = [];
-		let idx = 1;
-		
-		if (order_status) {
-			fields.push(`order_status = $${idx++}`);
-			values.push(order_status);
-		}
-		if (handler_id) {
-			fields.push(`handler_id = $${idx++}`);
-			values.push(handler_id);
-		}
-		if (discount_id !== undefined) {  // Allow null to reset discount
-			fields.push(`discount_id = $${idx++}`);
-			values.push(discount_id);
+		const { orderStatus, handlerId, discountId } = req.body; // Use camelCase
+
+		if (!mongoose.Types.ObjectId.isValid(id)) {
+			return res
+				.status(400)
+				.json({ success: false, message: "Invalid order ID format." });
 		}
 
-		if (fields.length === 0) {
-			return res.status(400).json({ error: "No fields to update" });
+		const updateFields = {};
+		// Only update if provided and different from current (optional optimization)
+		if (orderStatus !== undefined) updateFields.orderStatus = orderStatus;
+		if (handlerId !== undefined) {
+			// Validate handlerId if present and not null
+			if (handlerId && !mongoose.Types.ObjectId.isValid(handlerId)) {
+				return res.status(400).json({
+					success: false,
+					message: "Invalid handler ID format.",
+				});
+			}
+			// Fetch handler info for embedding
+			let handler = null;
+			if (handlerId) {
+				handler = await User.findById(handlerId).select(
+					"username userRole"
+				);
+				if (!handler || handler.isDeleted) {
+					// Assuming isDeleted for User is checked
+					return res.status(404).json({
+						success: false,
+						message: "Handler not found or deleted.",
+					});
+				}
+			}
+			updateFields.handlerId = handler ? handler._id : null;
+			updateFields.handlerInfo = handler
+				? { username: handler.username, userRole: handler.userRole }
+				: null;
+		}
+		if (discountId !== undefined) {
+			// Allow null to reset discount
+			// Validate discountId if present and not null
+			if (discountId && !mongoose.Types.ObjectId.isValid(discountId)) {
+				return res.status(400).json({
+					success: false,
+					message: "Invalid discount ID format.",
+				});
+			}
+			// Fetch discount info for embedding
+			let discount = null;
+			if (discountId) {
+				discount = await Discount.findById(discountId).select(
+					"discountType amount"
+				);
+				if (!discount || discount.isDeleted) {
+					// Assuming isDeleted for Discount is checked
+					return res.status(404).json({
+						success: false,
+						message: "Discount not found or deleted.",
+					});
+				}
+			}
+			updateFields.discountId = discount ? discount._id : null;
+			updateFields.discountInfo = discount
+				? {
+						discountType: discount.discountType,
+						amount: discount.amount,
+				  }
+				: null;
 		}
 
-		values.push(id);
-
-		const sql = `
-			UPDATE orders
-			SET ${fields.join(", ")}
-			WHERE order_id = $${idx} AND is_deleted = FALSE
-			RETURNING order_id, customer_id, order_date, handler_id, order_status, discount_id
-		`;
-
-		const result = await pool.query(sql, values);
-
-		if (result.rows.length === 0) {
-			return res.status(404).json({ error: "Order not found or is deleted" });
+		if (Object.keys(updateFields).length === 0) {
+			return res
+				.status(400)
+				.json({ success: false, message: "No fields to update" });
 		}
 
-		return res.status(200).json({ message: "Order updated", order: result.rows[0] });
+		const updatedOrder = await Order.findOneAndUpdate(
+			{ _id: id, isDeleted: false },
+			{ $set: updateFields },
+			{ new: true, runValidators: true } // Return updated doc, run validators
+		).select(
+			"customerId orderDate handlerId orderStatus discountId customerInfo handlerInfo discountInfo"
+		); // Select fields to return
+
+		if (!updatedOrder) {
+			return res.status(404).json({
+				success: false,
+				message: "Order not found or is deleted",
+			});
+		}
+
+		return res.status(200).json({
+			success: true,
+			message: "Order updated",
+			order: updatedOrder,
+		});
 	} catch (err) {
-		console.error(err.message);
-		return res.status(500).json({ error: "Failed to update order" });
+		console.error("Error updating order by ID:", err);
+		return res
+			.status(500)
+			.json({ success: false, message: "Failed to update order" });
 	}
 };
 
 export const deleteOrder = async (req, res) => {
 	const { id } = req.params;
 	try {
-		const result = await pool.query(
-			`UPDATE orders SET is_deleted = TRUE WHERE order_id = $1 AND is_deleted = FALSE RETURNING 1`,
-			[id]
-		);
-		if (result.rows.length === 0)
-			return res.status(404).json({ error: "Order not found or is already deleted" });
+		if (!mongoose.Types.ObjectId.isValid(id)) {
+			return res
+				.status(400)
+				.json({ success: false, message: "Invalid order ID format." });
+		}
 
-		res.json({ message: "Order deleted" });
+		const result = await Order.findOneAndUpdate(
+			{ _id: id, isDeleted: false },
+			{ $set: { isDeleted: true } },
+			{ new: true }
+		);
+
+		if (!result) {
+			return res.status(404).json({
+				success: false,
+				message: "Order not found or is already deleted",
+			});
+		}
+
+		return res.status(204).send(); // 204 No Content for successful soft delete
 	} catch (err) {
-		res.status(500).json({ error: "Failed to delete order" });
+		console.error("Error deleting order:", err);
+		return res
+			.status(500)
+			.json({ success: false, message: "Failed to delete order" });
 	}
 };
 
 export const addServiceToOrder = async (req, res) => {
-	const { order_id } = req.params;
-	const { number_of_unit, service_id } = req.body;
-	const client = await pool.connect();
-	const user_role = req.user?.user_role;
-	const user_id = req.user?.user_id;
+	const { order_id } = req.params; // order_id from params, use camelCase for internal use
+	const { numberOfUnit, serviceId } = req.body; // use camelCase
+	const userRole = req.user?.userRole;
+	const userId = req.user?._id; // Get ObjectId from authenticated user
+	const session = await mongoose.startSession();
+	session.startTransaction();
+
 	try {
-		await client.query("BEGIN");
-		// 1. Check if order exists or is deleted
-		const orderResult = await client.query(
-			`SELECT order_status, handler_id FROM orders WHERE order_id = $1 AND is_deleted = FALSE`,
-			[order_id]
-		);
+		if (!mongoose.Types.ObjectId.isValid(order_id)) {
+			throw new Error("Invalid order ID format.");
+		}
+		const orderObjectId = new mongoose.Types.ObjectId(order_id);
 
-		if (orderResult.rows.length === 0) {
-			await client.query("ROLLBACK");
-			return res.status(404).json({ error: "Order is either deleted or not found" });
+		if (!mongoose.Types.ObjectId.isValid(serviceId)) {
+			throw new Error("Invalid service ID format.");
+		}
+		const serviceObjectId = new mongoose.Types.ObjectId(serviceId);
+
+		// 1. Check if order exists and is not deleted
+		const order = await Order.findById(orderObjectId).session(session);
+		if (!order || order.isDeleted) {
+			throw new Error("Order not found or is deleted.");
 		}
 
-		// 2. Check if handler is the same as user
-		if (orderResult.rows[0].handler_id !== user_id && user_role !== "admin") {
-			await client.query("ROLLBACK");
-			return res.status(403).json({ error: "Unauthorized to add service to order" });
+		// 2. Check if handler is the same as user (and if handlerId exists on the order)
+		if (
+			order.handlerId &&
+			!userId.equals(order.handlerId) &&
+			userRole !== "admin"
+		) {
+			throw new Error("Unauthorized to add service to order.");
 		}
+
 		// 3. Check if order is completed or cancelled
-		const orderStatus = orderResult.rows[0].order_status;
-		if (orderStatus === "completed" || orderStatus === "cancelled") {
-			await client.query("ROLLBACK");
-			return res.status(400).json({ error: "Order is already completed or cancelled! Cannot add more services" });
+		if (
+			order.orderStatus === "completed" ||
+			order.orderStatus === "cancelled"
+		) {
+			throw new Error(
+				"Order is already completed or cancelled! Cannot add more services."
+			);
 		}
 
-		// 4. Check if service exists or is deleted
-		const serviceResult = await client.query(
-			`SELECT service_price_per_unit FROM services WHERE service_id = $1 AND is_deleted = FALSE`,
-			[service_id]
-		)
-
-		if (serviceResult.rows.length === 0) {
-			await client.query("ROLLBACK");
-			return res.status(404).json({ error: "Service is either deleted or not found" });
+		// 4. Check if service exists and is not deleted
+		const serviceDoc = await Service.findOne({
+			_id: serviceObjectId,
+			isDeleted: false,
+		}).session(session);
+		if (!serviceDoc) {
+			throw new Error("Service not found or is deleted.");
 		}
 
 		// 5. Check if service is a duplicate in the order
-		const orderServiceResult = await client.query(
-			`SELECT service_id FROM order_service WHERE order_id = $1 AND service_id = $2`,
-			[order_id, service_id]
+		const isDuplicate = order.services.some((svc) =>
+			svc.serviceId.equals(serviceObjectId)
 		);
-
-		if (orderServiceResult.rows.length > 0) {
-			await client.query("ROLLBACK");
-			return res.status(409).json({ error: "Service is already added to order" });
+		if (isDuplicate) {
+			throw new Error("Service is already added to order.");
 		}
-		
-		// 6. Add service
-		await client.query(
-			`INSERT INTO order_service (order_id, service_id, number_of_unit, total_price)
-				VALUES ($1, $2, $3, $4)`,
-			[order_id, service_id, number_of_unit, number_of_unit * serviceResult.rows[0].service_price_per_unit]
-		);
 
-		await client.query("COMMIT");
-		res.status(201).json({ message: "Service added to order" });
+		// 6. Add service to the embedded array
+		const totalPrice = numberOfUnit * serviceDoc.servicePricePerUnit;
+		order.services.push({
+			serviceId: serviceDoc._id,
+			serviceName: serviceDoc.serviceName,
+			serviceUnit: serviceDoc.serviceUnit,
+			pricePerUnit: serviceDoc.servicePricePerUnit,
+			numberOfUnit: numberOfUnit,
+			totalPrice: totalPrice,
+		});
+
+		await order.save({ session }); // Save the updated order document
+
+		await session.commitTransaction();
+		session.endSession();
+
+		return res
+			.status(201)
+			.json({ success: true, message: "Service added to order" });
 	} catch (err) {
-		await client.query("ROLLBACK");
-		console.log(err)
-		res.status(500).json({ error: "Failed to add service to order" });
-	} finally {
-		client.release();
+		await session.abortTransaction();
+		session.endSession();
+		console.error("Error adding service to order:", err);
+		return res.status(500).json({
+			success: false,
+			message: "Failed to add service to order",
+			details: err.message,
+		});
 	}
 };
 
 export const updateOrderService = async (req, res) => {
-	const { order_id, service_id } = req.params;
-	const { number_of_unit } = req.body;
-	const user_role = req.user?.user_role;
-	const user_id = req.user?.user_id;
-	const client = await pool.connect();
+	const { order_id, service_id } = req.params; // use camelCase for internal use
+	const { numberOfUnit } = req.body; // use camelCase
+	const userRole = req.user?.userRole;
+	const userId = req.user?._id;
+	const session = await mongoose.startSession();
+	session.startTransaction();
+
 	try {
-		await client.query("BEGIN");
-		// 1. Check if order exists or is deleted
-		const orderResult = await client.query(
-			`SELECT order_status, handler_id FROM orders WHERE order_id = $1 AND is_deleted = FALSE`,
-			[order_id]
-		);
-		if (orderResult.rows.length === 0) {
-			await client.query("ROLLBACK");
-			return res.status(404).json({ error: "Order is either deleted or not found" });
+		if (!mongoose.Types.ObjectId.isValid(order_id)) {
+			throw new Error("Invalid order ID format.");
+		}
+		const orderObjectId = new mongoose.Types.ObjectId(order_id);
+
+		if (!mongoose.Types.ObjectId.isValid(service_id)) {
+			throw new Error("Invalid service ID format.");
+		}
+		const serviceObjectId = new mongoose.Types.ObjectId(service_id);
+
+		// 1. Check if order exists and is not deleted
+		const order = await Order.findById(orderObjectId).session(session);
+		if (!order || order.isDeleted) {
+			throw new Error("Order not found or is deleted.");
 		}
 
-		// 2. Check if handler is the same as user
-		if (orderResult.rows[0].handler_id !== user_id && user_role !== "admin") {
-			await client.query("ROLLBACK");
-			return res.status(403).json({ error: "Unauthorized to update service in order" });
+		// 2. Check if handler is the same as user (and if handlerId exists on the order)
+		if (
+			order.handlerId &&
+			!userId.equals(order.handlerId) &&
+			userRole !== "admin"
+		) {
+			throw new Error("Unauthorized to update service in order.");
 		}
 
 		// 3. Check if order is completed or cancelled
-		const orderStatus = orderResult.rows[0].order_status;
-		if (orderStatus === "completed" || orderStatus === "cancelled") {
-			await client.query("ROLLBACK");
-			return res.status(400).json({ error: "Order is already completed or cancelled! Cannot update services" });
+		if (
+			order.orderStatus === "completed" ||
+			order.orderStatus === "cancelled"
+		) {
+			throw new Error(
+				"Order is already completed or cancelled! Cannot update services."
+			);
 		}
 
-		// 4. Check if service exists in the order
-		const serviceResult = await client.query(
-			`SELECT number_of_unit, total_price FROM order_service WHERE order_id = $1 AND service_id = $2`,
-			[order_id, service_id]
-		)
-		if (serviceResult.rows.length === 0) {
-			await client.query("ROLLBACK");
-			return res.status(404).json({ error: "Service not found in order" });
-		}
-
-		// 5. Update service detail
-		const historical_price_per_unit = serviceResult.rows[0].total_price / serviceResult.rows[0].number_of_unit;
-		await client.query(
-			`UPDATE order_service
-			SET number_of_unit = $1, total_price = CAST($1 AS INTEGER) * CAST($2 AS INTEGER)
-			WHERE order_id = $3 AND service_id = $4`,
-			[number_of_unit, historical_price_per_unit, order_id, service_id]
+		// 4. Find the service within the embedded array
+		const serviceIndex = order.services.findIndex((svc) =>
+			svc.serviceId.equals(serviceObjectId)
 		);
+		if (serviceIndex === -1) {
+			throw new Error("Service not found in order.");
+		}
 
-		await client.query("COMMIT");
-		res.json({ message: "Service quantity updated" });
+		// 5. Update service detail (number_of_unit and total_price)
+		// Recalculate total_price based on stored pricePerUnit
+		const historicalPricePerUnit =
+			order.services[serviceIndex].pricePerUnit;
+		order.services[serviceIndex].numberOfUnit = numberOfUnit;
+		order.services[serviceIndex].totalPrice =
+			numberOfUnit * historicalPricePerUnit;
+
+		await order.save({ session }); // Save the updated order document
+
+		await session.commitTransaction();
+		session.endSession();
+
+		return res.json({
+			success: true,
+			message: "Service quantity updated in order",
+		});
 	} catch (err) {
-		await client.query("ROLLBACK");
-		console.log(err)
-		res.status(500).json({ error: "Failed to update service in order" });
-	} finally {
-		client.release();
+		await session.abortTransaction();
+		session.endSession();
+		console.error("Error updating service in order:", err);
+		return res.status(500).json({
+			success: false,
+			message: "Failed to update service in order",
+			details: err.message,
+		});
 	}
 };
 
 export const removeServiceFromOrder = async (req, res) => {
-	const { order_id, service_id } = req.params;
-	const user_role = req.user?.user_role;
-	const user_id = req.user?.user_id;
-	const client = await pool.connect();
+	const { order_id, service_id } = req.params; // use camelCase for internal use
+	const userRole = req.user?.userRole;
+	const userId = req.user?._id;
+	const session = await mongoose.startSession();
+	session.startTransaction();
+
 	try {
-		await client.query("BEGIN");
-		// 1. Check if order exists or is already deleted
-		const orderResult = await client.query(
-			`SELECT order_status, handler_id FROM orders WHERE order_id = $1 AND is_deleted = FALSE`,
-			[order_id]
-		);
-		if (orderResult.rows.length === 0) {
-			await client.query("ROLLBACK");
-			return res.status(404).json({ error: "Order is either deleted or not found" });
+		if (!mongoose.Types.ObjectId.isValid(order_id)) {
+			throw new Error("Invalid order ID format.");
+		}
+		const orderObjectId = new mongoose.Types.ObjectId(order_id);
+
+		if (!mongoose.Types.ObjectId.isValid(service_id)) {
+			throw new Error("Invalid service ID format.");
+		}
+		const serviceObjectId = new mongoose.Types.ObjectId(service_id);
+
+		// 1. Check if order exists and is not deleted
+		const order = await Order.findById(orderObjectId).session(session);
+		if (!order || order.isDeleted) {
+			throw new Error("Order not found or is deleted.");
 		}
 
-		// 2. Check if handler is the same as user
-		if (orderResult.rows[0].handler_id !== user_id && user_role !== "admin") {
-			await client.query("ROLLBACK");
-			return res.status(403).json({ error: "Unauthorized to remove service from order" });
+		// 2. Check if handler is the same as user (and if handlerId exists on the order)
+		if (
+			order.handlerId &&
+			!userId.equals(order.handlerId) &&
+			userRole !== "admin"
+		) {
+			throw new Error("Unauthorized to remove service from order.");
 		}
 
 		// 3. Check if order is completed or cancelled
-		const orderStatus = orderResult.rows[0].order_status;
-		if (orderStatus === "completed" || orderStatus === "cancelled") {
-			await client.query("ROLLBACK");
-			return res.status(400).json({ error: "Order is already completed or cancelled! Cannot remove services" });
+		if (
+			order.orderStatus === "completed" ||
+			order.orderStatus === "cancelled"
+		) {
+			throw new Error(
+				"Order is already completed or cancelled! Cannot remove services."
+			);
 		}
 
-		// 4. Check if service exists in the order
-		const serviceResult = await client.query(
-			`SELECT service_id FROM order_service WHERE order_id = $1 AND service_id = $2`,
-			[order_id, service_id]
-		)
-		if (serviceResult.rows.length === 0) {
-			await client.query("ROLLBACK");
-			return res.status(404).json({ error: "Service not found in order" });
-		}
-
-		// 5. Remove service
-		await client.query(
-			`DELETE FROM order_service WHERE order_id = $1 AND service_id = $2`,
-			[order_id, service_id]
+		// 4. Find the service within the embedded array and remove it
+		const initialServiceCount = order.services.length;
+		order.services = order.services.filter(
+			(svc) => !svc.serviceId.equals(serviceObjectId)
 		);
 
-		await client.query("COMMIT");
-		res.json({ message: "Service removed from order" });
+		if (order.services.length === initialServiceCount) {
+			// If the length hasn't changed, the service wasn't found in the array
+			throw new Error("Service not found in order.");
+		}
+
+		await order.save({ session }); // Save the updated order document
+
+		await session.commitTransaction();
+		session.endSession();
+
+		return res.json({
+			success: true,
+			message: "Service removed from order",
+		});
 	} catch (err) {
-		await client.query("ROLLBACK");
-		res.status(500).json({ error: "Failed to remove service from order" });
-	} finally {
-		client.release();
+		await session.abortTransaction();
+		session.endSession();
+		console.error("Error removing service from order:", err);
+		return res.status(500).json({
+			success: false,
+			message: "Failed to remove service from order",
+			details: err.message,
+		});
 	}
 };

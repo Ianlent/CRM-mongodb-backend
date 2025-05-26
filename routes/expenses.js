@@ -1,11 +1,21 @@
 import express from "express";
 
 import { handleValidationErrors } from "../middleware/handleValidationErrors.js";
-import { getAllExpenses, getExpensesByDateRange, getExpenseById, createExpense, updateExpenseByID, deleteExpenseByID } from "../controller/expenseController.js";
-import { createExpenseValidation, updateExpenseValidation } from "../middleware/validators/expenseValidator.js";
+import {
+	getAllExpenses,
+	getExpensesByDateRange,
+	getExpenseById,
+	createExpense,
+	updateExpenseByID,
+	deleteExpenseByID,
+} from "../controller/expenseController.js";
+import {
+	createExpenseValidation,
+	updateExpenseValidation,
+} from "../middleware/validators/expenseValidator.js";
 
 //auth middleware /////////////////////////////////////////////////////////
-import authorizeRoles from '../middleware/auth/authorizeRoles.js';
+import authorizeRoles from "../middleware/auth/authorizeRoles.js";
 //////////////////////////////////////////////////////////////////////
 
 const router = express.Router();
@@ -18,13 +28,22 @@ router.get("/by-date-range", getExpensesByDateRange); //range?start=2025-04-01&e
 router.get("/:id", getExpenseById);
 
 // POST
-router.post("/", createExpenseValidation, handleValidationErrors, createExpense);
-
+router.post(
+	"/",
+	createExpenseValidation,
+	handleValidationErrors,
+	createExpense
+);
 
 //admin only routes
-router.use(authorizeRoles(['admin']));
+router.use(authorizeRoles(["admin"]));
 // PUT
-router.put("/:id", updateExpenseValidation, handleValidationErrors, updateExpenseByID);
+router.put(
+	"/:id",
+	updateExpenseValidation,
+	handleValidationErrors,
+	updateExpenseByID
+);
 
 // DELETE
 router.delete("/:id", deleteExpenseByID);
