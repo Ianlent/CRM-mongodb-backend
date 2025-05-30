@@ -16,6 +16,7 @@ import expenses from "./routes/expenses.js";
 import services from "./routes/services.js";
 import discounts from "./routes/discount.js";
 import order from "./routes/order.js";
+import analytics from "./routes/analytics.js";
 ///////////////////////////////////////////
 
 const app = express();
@@ -38,6 +39,8 @@ app.use("/api/expenses", authorizeRoles(["admin", "manager"]), expenses); // mor
 app.use("/api/services", services); // more authorization handled separately in route for finer control
 app.use("/api/discounts", discounts);
 app.use("/api/orders", order);
+
+app.use(authorizeRoles(["admin", "manager"]), analytics);
 
 // Start the server after connecting to the database
 const startServer = async () => {
