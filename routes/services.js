@@ -1,6 +1,8 @@
 import express from "express";
 
 import { handleValidationErrors } from "../middleware/handleValidationErrors.js";
+
+// controllers /////////////////////////////////////////////////////////
 import {
 	getAllServices,
 	getServicesByName,
@@ -9,6 +11,9 @@ import {
 	updateServiceById,
 	deleteServiceById,
 } from "../controller/serviceController.js";
+
+// validators /////////////////////////////////////////////////////////
+import { validateIdParam } from "../middleware/validators/idValidator.js";
 import {
 	createServiceValidation,
 	updateServiceValidation,
@@ -27,10 +32,10 @@ router.get("/", getAllServices); // ?page=1&limit=10
 router.get("/search", getServicesByName); // ?name=abc&page=1&limit=10
 
 // GET a single service by ID
-router.get("/:id", getServiceById);
+router.get("/:id", validateIdParam, handleValidationErrors, getServiceById);
 
 // The following routes require admin privileges
-router.use(authorizeRoles(["admin"]));
+router.use(authorizeRoles(["admin", "manager"]));
 
 // POST create a new service
 router.post(
@@ -43,12 +48,18 @@ router.post(
 // PUT update a service by ID
 router.put(
 	"/:id",
+	validateIdParam,
 	updateServiceValidation,
 	handleValidationErrors,
 	updateServiceById
 );
 
 // DELETE remove (soft-delete) a service by ID
-router.delete("/:id", deleteServiceById);
+router.delete(
+	"/:id",
+	validateIdParam,
+	handleValidationErrors,
+	deleteServiceById
+);
 
 export default router;

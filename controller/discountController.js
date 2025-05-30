@@ -2,8 +2,7 @@ import Discount from "../models/discount.model.js"; // Import the Mongoose Disco
 
 export const getAllDiscounts = async (req, res) => {
 	try {
-		const page = parseInt(req.query.page) || 1;
-		const limit = parseInt(req.query.limit) || 10;
+		const { page = 1, limit = 10 } = req.query;
 		const skip = (page - 1) * limit;
 
 		// Find all non-deleted discounts with pagination

@@ -13,6 +13,7 @@ const userSchema = new mongoose.Schema(
 			type: String,
 			required: true,
 			enum: ["employee", "manager", "admin"], // Enforces enum values
+			default: "employee",
 		},
 		userStatus: {
 			type: String,

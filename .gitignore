@@ -25,3 +25,4 @@ dist-ssr
 # environmental
 .env
 .env.local
+create-first-admin.js

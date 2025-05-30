@@ -1,92 +1,140 @@
 import { body, param } from "express-validator";
 
-
 // Validator for creating a new order
 export const createOrderValidation = [
-	body("customer_id")
-		.notEmpty().withMessage("Customer ID is required")
-		.isInt({ gt: 0 }).withMessage("Customer ID must be a positive integer"),
+	body("customerId")
+		.notEmpty()
+		.withMessage("Customer ID is required")
+		.isMongoId()
+		.withMessage("Customer ID must be a valid MongoDB ID"),
 
-	body("handler_id")
-		.notEmpty().withMessage("Handler ID is required")
-		.isInt({ gt: 0 }).withMessage("Handler ID must be a positive integer"),
-
-	body("discount_id")
+	body("handlerId")
 		.optional({ nullable: true })
-		.isInt({ gt: 0 }).withMessage("Discount ID must be a positive integer if provided"),
+		.isMongoId()
+		.withMessage("Handler ID must be a valid MongoDB ID if provided"),
+
+	body("discountId")
+		.optional({ nullable: true })
+		.isMongoId()
+		.withMessage("Discount ID must be a valid MongoDB ID if provided"),
 
 	body("services")
-		.isArray({ min: 1 }).withMessage("At least one service must be provided"),
+		.isArray({ min: 1 })
+		.withMessage("At least one service must be provided"),
 
-	body("services.*.service_id")
-		.notEmpty().withMessage("Service ID is required for each service")
-		.isInt({ gt: 0 }).withMessage("Service ID must be a positive integer"),
+	body("services.*.serviceId")
+		.notEmpty()
+		.withMessage("Service ID is required for each service")
+		.isMongoId()
+		.withMessage("Service ID must be a valid MongoDB ID"),
 
-	body("services.*.number_of_unit")
-		.notEmpty().withMessage("Unit number is required for each service")
-		.isInt({ gt: 0 }).withMessage("Unit must be a positive integer")
+	body("services.*.numberOfUnit")
+		.notEmpty()
+		.withMessage("Unit number is required for each service")
+		.isInt({ gt: 0 })
+		.withMessage("Unit must be a positive integer"),
 ];
 
-// Validator for updating an order (less strict, assumes partial update)
 export const updateOrderValidation = [
-	param("id")
-		.notEmpty().withMessage("Order ID is required")
-		.isUUID(4).withMessage("Order ID must be a valid UUID v4 string"),
-
-	body("handler_id")
-		.optional()
-		.isInt({ gt: 0 }).withMessage("Handler ID must be a positive integer"),
-
-	body("discount_id")
+	body("handlerId")
 		.optional({ nullable: true })
-		.isInt({ gt: 0 }).withMessage("Discount ID must be a positive integer if provided"),
-	
-	body("order_status")
-		.optional()
-		.isIn(['pending', 'confirmed', 'completed', 'cancelled'])
-		.withMessage("Order status must be one of the following: 'pending', 'confirmed', 'completed', 'cancelled'"),
+		.isMongoId()
+		.withMessage("Handler ID must be a valid MongoDB ID if provided"),
 
-	body("order_date")
+	body("discountId")
+		.optional({ nullable: true })
+		.isMongoId()
+		.withMessage("Discount ID must be a valid MongoDB ID if provided"),
+
+	body("orderStatus")
 		.optional()
-		.isISO8601().withMessage("Order date must be a valid date string (ISO 8601)"),
+		.isIn(["pending", "confirmed", "completed", "cancelled"])
+		.withMessage(
+			"Order status must be one of the following: 'pending', 'confirmed', 'completed', 'cancelled'"
+		),
 ];
 
 export const addServiceToOrderValidation = [
-	body("service_id")
-		.notEmpty().withMessage("Service ID is required")
-		.isInt({ gt: 0 }).withMessage("Service ID must be a positive integer"),
+	param("order_id")
+		.exists()
+		.withMessage("Order ID is required")
+		.notEmpty()
+		.withMessage("Order ID is required")
+		.isMongoId()
+		.withMessage("Order ID must be a valid MongoDB ID"),
+	body("serviceId")
+		.notEmpty()
+		.withMessage("Service ID is required")
+		.isMongoId()
+		.withMessage("Service ID must be a valid MongoDB ID"),
 
-	body("number_of_unit")
-		.notEmpty().withMessage("Unit number is required")
-		.isInt({ gt: 0 }).withMessage("Unit must be a positive integer"),
+	body("numberOfUnit")
+		.notEmpty()
+		.withMessage("Unit number is required")
+		.isInt({ gt: 0 })
+		.withMessage("Unit must be a positive integer"),
 ];
 
 export const updateServiceInOrderValidation = [
-	body("number_of_unit")
-		.notEmpty().withMessage("Unit number is required")
-		.isInt({ gt: 0 }).withMessage("Unit must be a positive integer"),
-];
-
-export const deleteServiceFromOrderValidation = [
-	param("service_id")
-		.notEmpty().withMessage("Service ID is required")
-		.isInt({ gt: 0 }).withMessage("Service ID must be a positive integer"),
-];
-
-export const orderParamValidation = [
 	param("order_id")
-		.notEmpty().withMessage("Order ID is required")
-		.isUUID(4).withMessage("Order ID must be a valid UUID v4 string"),
+		.exists()
+		.withMessage("Order ID is required")
+		.notEmpty()
+		.withMessage("Order ID is required")
+		.isMongoId()
+		.withMessage("Order ID must be a valid MongoDB ID"),
+	param("service_id")
+		.exists()
+		.withMessage("Service ID is required")
+		.notEmpty()
+		.withMessage("Service ID is required")
+		.isMongoId()
+		.withMessage("Service ID must be a valid MongoDB ID"),
+	body("numberOfUnit")
+		.notEmpty()
+		.withMessage("Unit number is required")
+		.isInt({ gt: 0 })
+		.withMessage("Unit must be a positive integer"),
 ];
 
-export const serviceParamValidation = [
+export const removeServiceFromOrderValidation = [
+	param("order_id")
+		.exists()
+		.withMessage("Order ID is required")
+		.notEmpty()
+		.withMessage("Order ID is required")
+		.isMongoId()
+		.withMessage("Order ID must be a valid MongoDB ID"),
 	param("service_id")
-		.notEmpty().withMessage("Service ID is required")
-		.isInt({ gt: 0 }).withMessage("Service ID must be a positive integer"),
+		.notEmpty()
+		.withMessage("Service ID is required")
+		.isMongoId()
+		.withMessage("Service ID must be a valid MongoDB ID"),
 ];
 
 export const checkHandlerParamValidation = [
 	param("handler_id")
-		.notEmpty().withMessage("Handler ID is required")
-		.isInt({ gt: 0 }).withMessage("Handler ID must be a positive integer"),
+		.exists()
+		.withMessage("Handler ID is required")
+		.notEmpty()
+		.withMessage("Handler ID cannot be empty")
+		.isMongoId()
+		.withMessage("Handler ID must be a valid MongoDB ID"),
+];
+
+export const getOrdersByDateRangeValidation = [
+	body("start")
+		.optional()
+		.isISO8601()
+		.withMessage("Start date must be a valid ISO 8601 date string"),
+	body("end")
+		.optional()
+		.isISO8601()
+		.withMessage("End date must be a valid ISO 8601 date string"),
+	body().custom((value, { req }) => {
+		if (!req.query.start && !req.query.end) {
+			throw new Error("Either start or end date is required.");
+		}
+		return true;
+	}),
 ];

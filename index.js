@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import { connectDB } from "./config/db.js"; // Import the connectDB function
+import mongoSanitize from "express-mongo-sanitize";
 
 //middleware /////////////////////////////////////////////////////////
 import authenticateToken from "./middleware/auth/authenticateToken.js";
@@ -22,6 +23,7 @@ const app = express();
 // Middleware setup
 app.use(cors());
 app.use(express.json()); // For parsing application/json
+app.use(mongoSanitize());
 
 // Auth entry point (public route)
 app.use("/auth", auth);
@@ -30,7 +32,7 @@ app.use("/auth", auth);
 app.use(authenticateToken); // All routes below this will require a valid token
 
 // API routes with authorization where specified
-app.use("/api/users", authorizeRoles(["admin"]), users);
+app.use("/api/users", users);
 app.use("/api/customers", customers); // authorization handled separately in route for finer control
 app.use("/api/expenses", authorizeRoles(["admin", "manager"]), expenses); // more authorization handled separately in route for finer control
 app.use("/api/services", services); // more authorization handled separately in route for finer control

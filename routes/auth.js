@@ -1,15 +1,14 @@
 import express from "express";
-import { login, register } from "../controller/authController.js";
-import {
-	registerValidation,
-	loginValidation,
-} from "../middleware/validators/authValidator.js";
+import { login } from "../controller/authController.js";
+import { loginValidation } from "../middleware/validators/authValidator.js";
 import { handleValidationErrors } from "../middleware/handleValidationErrors.js";
+import authenticateToken from "../middleware/auth/authenticateToken.js";
 
 const router = express.Router();
 
-router.post("/register", registerValidation, handleValidationErrors, register);
-
 router.post("/login", loginValidation, handleValidationErrors, login);
+router.post("/check", authenticateToken, (req, res) => {
+	res.sendStatus(200);
+});
 
 export default router;

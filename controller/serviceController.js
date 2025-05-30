@@ -3,8 +3,7 @@ import Service from "../models/service.model.js"; // Import the Mongoose Service
 // GET all services with optional pagination
 export const getAllServices = async (req, res) => {
 	try {
-		const page = parseInt(req.query.page) || 1;
-		const limit = parseInt(req.query.limit) || 10;
+		const { page = 1, limit = 10 } = req.query;
 		const skip = (page - 1) * limit;
 
 		// Find all non-deleted services with pagination

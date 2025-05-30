@@ -6,7 +6,6 @@ import Discount from "../models/discount.model.js"; // Needed for discount detai
 
 // Dotenv should ideally be configured once in your main app entry point (e.g., index.js)
 // If MAGNIFICATION_FACTOR is used for calculation, ensure it's converted to a number.
-const magnificationFactor = parseFloat(process.env.MAGNIFICATION_FACTOR || "1");
 
 export const getAllOrders = async (req, res) => {
 	try {
@@ -270,28 +269,53 @@ export const getOrderDetailsById = async (req, res) => {
 
 export const createOrder = async (req, res) => {
 	const { customerId, handlerId, discountId, services } = req.body;
-	const session = await mongoose.startSession(); // Start a session for transaction
-	session.startTransaction(); // Begin transaction
+	const user = req.user;
 
 	try {
 		// 1. Validate incoming IDs and fetch necessary data
 		if (!mongoose.Types.ObjectId.isValid(customerId)) {
 			throw new Error("Invalid customer ID format.");
 		}
-		const customer = await Customer.findById(customerId).session(session);
+		const customer = await Customer.findById(customerId); // Removed .session(session)
 		if (!customer || customer.isDeleted) {
 			throw new Error("Customer not found or deleted.");
 		}
 
-		let handler = null;
-		if (handlerId) {
-			if (!mongoose.Types.ObjectId.isValid(handlerId)) {
-				throw new Error("Invalid handler ID format.");
+		let assignedHandlerId = null;
+		let assignedHandlerInfo = null;
+
+		if (user.userRole === "admin" || user.userRole === "manager") {
+			if (handlerId) {
+				if (!mongoose.Types.ObjectId.isValid(handlerId)) {
+					throw new Error("Invalid handler ID format.");
+				}
+				const foundHandler = await User.findById(handlerId); // Removed .session(session)
+				if (!foundHandler || foundHandler.isDeleted) {
+					throw new Error("Handler not found or deleted.");
+				}
+				assignedHandlerId = foundHandler._id;
+				assignedHandlerInfo = {
+					username: foundHandler.username,
+					userRole: foundHandler.userRole,
+				};
+			} else {
+				assignedHandlerId = user._id;
+				assignedHandlerInfo = {
+					username: user.username,
+					userRole: user.userRole,
+				};
 			}
-			handler = await User.findById(handlerId).session(session);
-			if (!handler || handler.isDeleted) {
-				throw new Error("Handler not found or deleted.");
+		} else {
+			if (handlerId) {
+				throw new Error(
+					"Only admins or managers can assign orders to other handlers."
+				);
 			}
+			assignedHandlerId = user._id;
+			assignedHandlerInfo = {
+				username: user.username,
+				userRole: user.userRole,
+			};
 		}
 
 		let discount = null;
@@ -299,23 +323,20 @@ export const createOrder = async (req, res) => {
 			if (!mongoose.Types.ObjectId.isValid(discountId)) {
 				throw new Error("Invalid discount ID format.");
 			}
-			discount = await Discount.findById(discountId).session(session);
+			discount = await Discount.findById(discountId); // Removed .session(session)
 			if (!discount || discount.isDeleted) {
 				throw new Error("Discount not found or deleted.");
 			}
 
-			// 1.1 Customer points check and update
 			if (customer.points < discount.requiredPoints) {
 				throw new Error(
 					"Customer does not have enough points for discount."
 				);
 			}
-			// Decrement customer points
 			customer.points -= discount.requiredPoints;
-			await customer.save({ session }); // Save within the transaction
+			await customer.save(); // Removed { session }
 		}
 
-		// 2. Prepare embedded services
 		const embeddedServices = [];
 		for (const svc of services) {
 			if (!mongoose.Types.ObjectId.isValid(svc.serviceId)) {
@@ -323,60 +344,45 @@ export const createOrder = async (req, res) => {
 					`Invalid service ID format for service: ${svc.serviceId}`
 				);
 			}
-			const serviceDoc = await Service.findById(svc.serviceId).session(
-				session
-			);
+			const serviceDoc = await Service.findById(svc.serviceId); // Removed .session(session)
 			if (!serviceDoc || serviceDoc.isDeleted) {
 				throw new Error(
 					`Service with ID ${svc.serviceId} not found or deleted.`
 				);
 			}
-			// Calculate total_price based on service_price_per_unit at the time of order creation
 			const totalPrice =
 				svc.numberOfUnit * serviceDoc.servicePricePerUnit;
 			embeddedServices.push({
 				serviceId: serviceDoc._id,
 				serviceName: serviceDoc.serviceName,
 				serviceUnit: serviceDoc.serviceUnit,
-				pricePerUnit: serviceDoc.servicePricePerUnit, // Store the price at time of order
+				pricePerUnit: serviceDoc.servicePricePerUnit,
 				numberOfUnit: svc.numberOfUnit,
 				totalPrice: totalPrice,
 			});
 		}
 
-		// 3. Create the order document
 		const newOrder = new Order({
 			customerId: customer._id,
 			customerInfo: {
-				// Embedding customer details
 				firstName: customer.firstName,
 				lastName: customer.lastName,
 				phoneNumber: customer.phoneNumber,
 			},
-			handlerId: handler ? handler._id : null,
-			handlerInfo: handler
-				? {
-						// Embedding handler details
-						username: handler.username,
-						userRole: handler.userRole,
-				  }
-				: null,
+			handlerId: assignedHandlerId,
+			handlerInfo: assignedHandlerInfo,
 			discountId: discount ? discount._id : null,
 			discountInfo: discount
 				? {
-						// Embedding discount details
 						discountType: discount.discountType,
 						amount: discount.amount,
 				  }
 				: null,
 			services: embeddedServices,
-			orderStatus: "pending", // Default status
+			orderStatus: "pending",
 		});
 
-		const savedOrder = await newOrder.save({ session }); // Save within the transaction
-
-		await session.commitTransaction(); // Commit transaction
-		session.endSession(); // End session
+		const savedOrder = await newOrder.save(); // Removed { session }
 
 		const responseOrder = savedOrder.toObject();
 		delete responseOrder.isDeleted;
@@ -389,9 +395,6 @@ export const createOrder = async (req, res) => {
 			order: responseOrder,
 		});
 	} catch (err) {
-		await session.abortTransaction(); // Rollback transaction
-		session.endSession(); // End session
-
 		console.error("Error creating order:", err);
 		return res.status(500).json({
 			success: false,
@@ -607,8 +610,6 @@ export const addServiceToOrder = async (req, res) => {
 	const { numberOfUnit, serviceId } = req.body; // use camelCase
 	const userRole = req.user?.userRole;
 	const userId = req.user?._id; // Get ObjectId from authenticated user
-	const session = await mongoose.startSession();
-	session.startTransaction();
 
 	try {
 		if (!mongoose.Types.ObjectId.isValid(order_id)) {
@@ -622,7 +623,7 @@ export const addServiceToOrder = async (req, res) => {
 		const serviceObjectId = new mongoose.Types.ObjectId(serviceId);
 
 		// 1. Check if order exists and is not deleted
-		const order = await Order.findById(orderObjectId).session(session);
+		const order = await Order.findById(orderObjectId);
 		if (!order || order.isDeleted) {
 			throw new Error("Order not found or is deleted.");
 		}
@@ -650,7 +651,7 @@ export const addServiceToOrder = async (req, res) => {
 		const serviceDoc = await Service.findOne({
 			_id: serviceObjectId,
 			isDeleted: false,
-		}).session(session);
+		});
 		if (!serviceDoc) {
 			throw new Error("Service not found or is deleted.");
 		}
@@ -674,17 +675,12 @@ export const addServiceToOrder = async (req, res) => {
 			totalPrice: totalPrice,
 		});
 
-		await order.save({ session }); // Save the updated order document
-
-		await session.commitTransaction();
-		session.endSession();
+		await order.save(); // Save the updated order document
 
 		return res
 			.status(201)
 			.json({ success: true, message: "Service added to order" });
 	} catch (err) {
-		await session.abortTransaction();
-		session.endSession();
 		console.error("Error adding service to order:", err);
 		return res.status(500).json({
 			success: false,
@@ -699,8 +695,6 @@ export const updateOrderService = async (req, res) => {
 	const { numberOfUnit } = req.body; // use camelCase
 	const userRole = req.user?.userRole;
 	const userId = req.user?._id;
-	const session = await mongoose.startSession();
-	session.startTransaction();
 
 	try {
 		if (!mongoose.Types.ObjectId.isValid(order_id)) {
@@ -714,7 +708,7 @@ export const updateOrderService = async (req, res) => {
 		const serviceObjectId = new mongoose.Types.ObjectId(service_id);
 
 		// 1. Check if order exists and is not deleted
-		const order = await Order.findById(orderObjectId).session(session);
+		const order = await Order.findById(orderObjectId);
 		if (!order || order.isDeleted) {
 			throw new Error("Order not found or is deleted.");
 		}
@@ -754,18 +748,13 @@ export const updateOrderService = async (req, res) => {
 		order.services[serviceIndex].totalPrice =
 			numberOfUnit * historicalPricePerUnit;
 
-		await order.save({ session }); // Save the updated order document
-
-		await session.commitTransaction();
-		session.endSession();
+		await order.save(); // Save the updated order document
 
 		return res.json({
 			success: true,
 			message: "Service quantity updated in order",
 		});
 	} catch (err) {
-		await session.abortTransaction();
-		session.endSession();
 		console.error("Error updating service in order:", err);
 		return res.status(500).json({
 			success: false,
@@ -779,8 +768,6 @@ export const removeServiceFromOrder = async (req, res) => {
 	const { order_id, service_id } = req.params; // use camelCase for internal use
 	const userRole = req.user?.userRole;
 	const userId = req.user?._id;
-	const session = await mongoose.startSession();
-	session.startTransaction();
 
 	try {
 		if (!mongoose.Types.ObjectId.isValid(order_id)) {
@@ -794,7 +781,7 @@ export const removeServiceFromOrder = async (req, res) => {
 		const serviceObjectId = new mongoose.Types.ObjectId(service_id);
 
 		// 1. Check if order exists and is not deleted
-		const order = await Order.findById(orderObjectId).session(session);
+		const order = await Order.findById(orderObjectId);
 		if (!order || order.isDeleted) {
 			throw new Error("Order not found or is deleted.");
 		}
@@ -829,18 +816,13 @@ export const removeServiceFromOrder = async (req, res) => {
 			throw new Error("Service not found in order.");
 		}
 
-		await order.save({ session }); // Save the updated order document
-
-		await session.commitTransaction();
-		session.endSession();
+		await order.save(); // Save the updated order document
 
 		return res.json({
 			success: true,
 			message: "Service removed from order",
 		});
 	} catch (err) {
-		await session.abortTransaction();
-		session.endSession();
 		console.error("Error removing service from order:", err);
 		return res.status(500).json({
 			success: false,

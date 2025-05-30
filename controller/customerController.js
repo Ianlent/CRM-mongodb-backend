@@ -1,14 +1,32 @@
 import Customer from "../models/customer.model.js"; // Import the Mongoose Customer model
 
+const escapeRegExp = (string) => {
+	return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); // $& means the whole matched string
+};
+
 export const getAllCustomers = async (req, res) => {
+	const { page = 1, limit = 10 } = req.query;
+	const skip = (page - 1) * limit;
 	try {
 		// Find all customers that are not deleted, ordered by _id (which is roughly by creation time)
 		const customers = await Customer.find({ isDeleted: false })
 			.sort({ _id: 1 }) // Sort by _id ascending
+			.skip(skip)
+			.limit(limit)
 			.select("firstName lastName phoneNumber address points"); // Select specific fields
 
+		const totalCount = await Customer.countDocuments({ isDeleted: false });
 		// Mongoose find returns an array directly, similar to result.rows
-		return res.status(200).json({ success: true, data: customers });
+		return res.status(200).json({
+			success: true,
+			data: customers,
+			pagination: {
+				total_records: totalCount,
+				page: page,
+				limit: limit,
+				total_pages: Math.ceil(totalCount / limit),
+			},
+		});
 	} catch (err) {
 		console.error(err.message);
 		return res
@@ -47,32 +65,70 @@ export const getCustomerById = async (req, res) => {
 export const getCustomerByPhoneFirstLast = async (req, res) => {
 	try {
 		let { phoneNumber = "", firstName = "", lastName = "" } = req.body; // Use camelCase for consistency
+		const { page = 1, limit = 10 } = req.query;
+		const skip = (page - 1) * limit;
 
-		// Create a query object for Mongoose
 		const query = {
 			isDeleted: false,
-			// Using regex for partial, case-insensitive matching
-			phoneNumber: { $regex: new RegExp(`^${phoneNumber}`, "i") },
-			firstName: { $regex: new RegExp(`^${firstName}`, "i") },
-			lastName: { $regex: new RegExp(`^${lastName}`, "i") },
 		};
+
+		// Only add the regex filter if the input is not an empty string
+		if (phoneNumber) {
+			// This checks if phoneNumber is NOT an empty string
+			query.phoneNumber = {
+				$regex: new RegExp(`^${escapeRegExp(phoneNumber)}`, "i"),
+			};
+		}
+		if (firstName) {
+			// This checks if firstName is NOT an empty string
+			query.firstName = {
+				$regex: new RegExp(`^${escapeRegExp(firstName)}`, "i"),
+			};
+		}
+		if (lastName) {
+			// This checks if lastName is NOT an empty string
+			query.lastName = {
+				$regex: new RegExp(`^${escapeRegExp(lastName)}`, "i"),
+			};
+		}
 
 		const customers = await Customer.find(query)
 			.sort({ firstName: 1, lastName: 1 })
-			.limit(50)
+			.skip(skip)
+			.limit(limit)
 			.select("firstName lastName phoneNumber address points");
 
-		if (customers.length === 0) {
+		const totalCount = await Customer.countDocuments(query);
+
+		if (totalCount === 0) {
+			// If absolutely no matching customers exist
 			return res.status(200).json({
 				success: true,
-				data: [],
-				canCreate: true,
+				data: [], // No data
+				canCreate: true, // Suggest creation
+				pagination: {
+					// Still provide pagination info, even if empty
+					total_records: 0,
+					page: parseInt(page),
+					limit: parseInt(limit),
+					total_pages: 0,
+				},
 				message:
 					"No matching customers found. You can create a new one.",
 			});
 		}
 
-		return res.status(200).json({ success: true, data: customers });
+		return res.status(200).json({
+			success: true,
+			data: customers,
+			pagination: {
+				total_records: totalCount,
+				page,
+				limit,
+				total_pages: Math.ceil(totalCount / limit),
+			},
+			message: "Customers found successfully",
+		});
 	} catch (err) {
 		console.error(err.message);
 		return res

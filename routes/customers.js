@@ -1,4 +1,6 @@
 import express from "express";
+
+//controllers /////////////////////////////////////////////////////////
 import {
 	getAllCustomers,
 	getCustomerById,
@@ -7,6 +9,9 @@ import {
 	updateCustomerByID,
 	deleteCustomerByID,
 } from "../controller/customerController.js";
+
+//validators /////////////////////////////////////////////////////////
+import { validateIdParam } from "../middleware/validators/idValidator.js";
 import {
 	createCustomerValidation,
 	updateCustomerValidation,
@@ -19,11 +24,11 @@ import authorizeRoles from "../middleware/auth/authorizeRoles.js";
 const router = express.Router();
 
 //get
-router.get("/", getAllCustomers);
+router.get("/", getAllCustomers); //?page=1&limit=10
 
-router.get("/search", getCustomerByPhoneFirstLast);
+router.get("/search", getCustomerByPhoneFirstLast); //?page=1&limit=10
 
-router.get("/:id", getCustomerById);
+router.get("/:id", validateIdParam, handleValidationErrors, getCustomerById);
 
 // //post
 router.post(
@@ -36,12 +41,19 @@ router.post(
 // //put
 router.put(
 	"/:id",
+	validateIdParam,
 	updateCustomerValidation,
 	handleValidationErrors,
 	updateCustomerByID
 );
 
 // //delete
-router.delete("/:id", authorizeRoles(["admin"]), deleteCustomerByID);
+router.delete(
+	"/:id",
+	validateIdParam,
+	handleValidationErrors,
+	authorizeRoles(["admin"]),
+	deleteCustomerByID
+);
 
 export default router;

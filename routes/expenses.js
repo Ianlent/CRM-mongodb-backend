@@ -1,6 +1,7 @@
 import express from "express";
-
 import { handleValidationErrors } from "../middleware/handleValidationErrors.js";
+
+//controllers /////////////////////////////////////////////////////////
 import {
 	getAllExpenses,
 	getExpensesByDateRange,
@@ -9,6 +10,9 @@ import {
 	updateExpenseByID,
 	deleteExpenseByID,
 } from "../controller/expenseController.js";
+
+//validators /////////////////////////////////////////////////////////
+import { validateIdParam } from "../middleware/validators/idValidator.js";
 import {
 	createExpenseValidation,
 	updateExpenseValidation,
@@ -25,7 +29,7 @@ router.get("/", getAllExpenses); //?page=1&limit=10
 
 router.get("/by-date-range", getExpensesByDateRange); //range?start=2025-04-01&end=2025-04-30
 
-router.get("/:id", getExpenseById);
+router.get("/:id", validateIdParam, handleValidationErrors, getExpenseById);
 
 // POST
 router.post(
@@ -40,12 +44,18 @@ router.use(authorizeRoles(["admin"]));
 // PUT
 router.put(
 	"/:id",
+	validateIdParam,
 	updateExpenseValidation,
 	handleValidationErrors,
 	updateExpenseByID
 );
 
 // DELETE
-router.delete("/:id", deleteExpenseByID);
+router.delete(
+	"/:id",
+	validateIdParam,
+	handleValidationErrors,
+	deleteExpenseByID
+);
 
 export default router;

@@ -1,8 +1,7 @@
-// routes/ordersRoutes.js
 import express from "express";
 import { handleValidationErrors } from "../middleware/handleValidationErrors.js";
 
-// Controller functions (create these in orderController.js)
+// Controller functions
 import {
 	getAllOrders,
 	getCurrentOrdersForHandler,
@@ -19,70 +18,97 @@ import {
 
 // Middleware
 import authorizeRoles from "../middleware/auth/authorizeRoles.js";
+
+// Validators
 import {
 	createOrderValidation,
 	updateOrderValidation,
 	addServiceToOrderValidation,
 	updateServiceInOrderValidation,
-	deleteServiceFromOrderValidation,
-} from "../middleware/validators/orderValidator.js";
-import {
+	removeServiceFromOrderValidation,
 	checkHandlerParamValidation,
-	orderParamValidation,
-	serviceParamValidation,
+	getOrdersByDateRangeValidation,
 } from "../middleware/validators/orderValidator.js";
+import { validateIdParam } from "../middleware/validators/idValidator.js";
 
 const router = express.Router();
+// Public/Employee accessible routes
+// GET a specific order by ID
+router.get(
+	"/:id",
+	validateIdParam, // Apply specific validation for this route
+	handleValidationErrors,
+	getOrderDetailsById
+);
 
-//employee routes
-// GET
-router.get("/:id", getOrderDetailsById);
+// GET current orders for a specific handler
 router.get(
 	"/current/:handler_id",
 	checkHandlerParamValidation,
 	handleValidationErrors,
 	getCurrentOrdersForHandler
 );
-router.put("/:id/status", updateOrderValidation, updateOrderStatus);
 
-// // POST
+// PUT update the status of an order
+router.put(
+	"/:id/status",
+	validateIdParam,
+	updateOrderValidation,
+	handleValidationErrors,
+	updateOrderStatus
+);
+
+// POST create a new order
 router.post("/", createOrderValidation, handleValidationErrors, createOrder);
 
 // Optional service management within orders
+// Add service to order
 router.post(
 	"/:order_id/services",
-	orderParamValidation,
 	addServiceToOrderValidation,
 	handleValidationErrors,
 	addServiceToOrder
-); // add service to order
+);
+
+// Update quantity of a service in an order
 router.put(
 	"/:order_id/services/:service_id",
-	orderParamValidation,
-	serviceParamValidation,
-	updateServiceInOrderValidation,
+	updateServiceInOrderValidation, // This now includes both param validations
 	handleValidationErrors,
 	updateOrderService
-); // update quantity
+);
+
+// Remove service from an order
 router.delete(
 	"/:order_id/services/:service_id",
-	orderParamValidation,
-	serviceParamValidation,
-	deleteServiceFromOrderValidation,
+	removeServiceFromOrderValidation, // This now includes both param validations
 	handleValidationErrors,
 	removeServiceFromOrder
-); // remove service
+);
 
-// Admin or staff only
+// Admin or manager only routes
 router.use(authorizeRoles(["admin", "manager"]));
-router.get("/", getAllOrders); // ?page=1&limit=10&customer_id=123 (optional filters)
-router.get("/search", getOrdersByDateRange); // ?start=2025-04-01&end=2025-04-04
+
+// GET all orders (with optional pagination)
+router.get("/", getAllOrders);
+
+// GET orders by date range
+router.get(
+	"/search",
+	getOrdersByDateRangeValidation, // Apply specific validation for date range
+	handleValidationErrors,
+	getOrdersByDateRange
+);
+
+// PUT update an order by ID (handler, discount, status, etc.)
 router.put(
 	"/:id",
-	updateOrderValidation,
+	updateOrderValidation, // This now includes param('id') validation
 	handleValidationErrors,
 	updateOrderByID
-); // update who handles the order, discount status and track order's status in all cases
-router.delete("/:id", deleteOrder);
+);
+
+// DELETE (soft delete) an order
+router.delete("/:id", validateIdParam, handleValidationErrors, deleteOrder);
 
 export default router;

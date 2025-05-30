@@ -1,12 +1,11 @@
 const authorizeRoles = (allowedRoles) => {
 	return (req, res, next) => {
-		const userRole = req.user?.user_role;
+		const userRole = req.user?.userRole;
 		if (!userRole || !allowedRoles.includes(userRole)) {
-			return res.status(403).json({ message: 'Forbidden' });
+			return res.status(403).json({ message: "Forbidden" });
 		}
 		next();
 	};
 };
 
-export default authorizeRoles
-  
+export default authorizeRoles;

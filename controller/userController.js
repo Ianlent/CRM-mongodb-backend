@@ -5,16 +5,28 @@ const saltRounds = 10;
 
 // Fetch all non-deleted users
 export const getAllUsers = async (req, res) => {
+	const { page = 1, limit = 10 } = req.query;
+	const skip = (page - 1) * limit;
 	try {
-		// Find all users that are not deleted, ordered by _id (which is roughly by creation time)
 		const users = await User.find({ isDeleted: false })
 			.sort({ _id: 1 }) // Sort by _id ascending
+			.skip(skip)
+			.limit(limit)
 			.select(
 				"username userRole userStatus phoneNumber createdAt updatedAt"
 			); // Select specific fields
 
-		// Mongoose find returns an array directly, similar to result.rows
-		return res.status(200).json({ success: true, data: users });
+		const totalCount = await User.countDocuments({ isDeleted: false });
+		return res.status(200).json({
+			success: true,
+			data: users,
+			pagination: {
+				total_records: totalCount,
+				page: page,
+				limit: limit,
+				total_pages: Math.ceil(totalCount / limit),
+			},
+		});
 	} catch (err) {
 		console.error(err.message);
 		return res
@@ -23,24 +35,20 @@ export const getAllUsers = async (req, res) => {
 	}
 };
 
-// Fetch a single user by ID (only if not deleted)
 export const getUserById = async (req, res) => {
 	try {
 		const { id } = req.params;
 
-		// Find a single user by their _id
 		const user = await User.findOne({ _id: id, isDeleted: false }).select(
 			"username userRole userStatus phoneNumber createdAt updatedAt"
 		);
 
 		if (!user) {
-			// Mongoose returns null if no document is found
 			return res
 				.status(404)
 				.json({ success: false, message: "User not found" });
 		}
 
-		// Mongoose returns the document directly, no need for result.rows[0]
 		return res.status(200).json({ success: true, data: user });
 	} catch (err) {
 		console.error(err.message);
@@ -95,11 +103,18 @@ export const createUser = async (req, res) => {
 
 // Update existing user (optional password change)
 export const updateUserByID = async (req, res) => {
+	const currentUserRole = req.user?.userRole;
+	const userId = req.user?._id;
 	try {
 		const { id } = req.params;
 		const { username, userRole, phoneNumber, password, userStatus } =
 			req.body; // Use camelCase
 
+		if (currentUserRole !== "admin" && userId !== id) {
+			return res
+				.status(403)
+				.json({ success: false, message: "Forbidden" });
+		}
 		// Build the update object dynamically
 		const updateFields = {};
 		if (username !== undefined) updateFields.username = username;
