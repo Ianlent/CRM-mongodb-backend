@@ -3,6 +3,7 @@ import Customer from "../models/customer.model.js"; // Needed for customer point
 import User from "../models/user.model.js"; // Needed for handler existence check
 import Service from "../models/service.model.js"; // Needed for service price check
 import Discount from "../models/discount.model.js"; // Needed for discount details
+import mongoose from "mongoose";
 
 // Dotenv should ideally be configured once in your main app entry point (e.g., index.js)
 // If MAGNIFICATION_FACTOR is used for calculation, ensure it's converted to a number.
@@ -338,6 +339,8 @@ export const createOrder = async (req, res) => {
 		}
 
 		const embeddedServices = [];
+		let subtotal = 0;
+
 		for (const svc of services) {
 			if (!mongoose.Types.ObjectId.isValid(svc.serviceId)) {
 				throw new Error(
@@ -352,6 +355,9 @@ export const createOrder = async (req, res) => {
 			}
 			const totalPrice =
 				svc.numberOfUnit * serviceDoc.servicePricePerUnit;
+
+			subtotal += totalPrice;
+
 			embeddedServices.push({
 				serviceId: serviceDoc._id,
 				serviceName: serviceDoc.serviceName,
@@ -382,7 +388,20 @@ export const createOrder = async (req, res) => {
 			orderStatus: "pending",
 		});
 
-		const savedOrder = await newOrder.save(); // Removed { session }
+		let totalOrderPrice = subtotal;
+		if (discount) {
+			if (discount.discountType === "percent") {
+				totalOrderPrice = subtotal * (1 - discount.amount / 100);
+			} else if (discount.discountType === "fixed") {
+				totalOrderPrice = subtotal - discount.amount;
+			}
+
+			if (totalOrderPrice < 0) {
+				totalOrderPrice = 0;
+			}
+		}
+
+		const savedOrder = await newOrder.save();
 
 		const responseOrder = savedOrder.toObject();
 		delete responseOrder.isDeleted;
@@ -393,9 +412,16 @@ export const createOrder = async (req, res) => {
 			success: true,
 			message: "Order created successfully",
 			order: responseOrder,
+			totalOrderPrice: totalOrderPrice,
 		});
 	} catch (err) {
 		console.error("Error creating order:", err);
+		if (err instanceof Error) {
+			return res.status(400).json({
+				success: false,
+				message: err.message,
+			});
+		}
 		return res.status(500).json({
 			success: false,
 			message: "Failed to create order",

@@ -40,7 +40,7 @@ app.use("/api/services", services); // more authorization handled separately in 
 app.use("/api/discounts", discounts);
 app.use("/api/orders", order);
 
-app.use(authorizeRoles(["admin", "manager"]), analytics);
+app.use("/api/analytics", authorizeRoles(["admin", "manager"]), analytics);
 
 // Start the server after connecting to the database
 const startServer = async () => {
