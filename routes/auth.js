@@ -7,8 +7,5 @@ import authenticateToken from "../middleware/auth/authenticateToken.js";
 const router = express.Router();
 
 router.post("/login", loginValidation, handleValidationErrors, login);
-router.post("/check", authenticateToken, (req, res) => {
-	res.sendStatus(200);
-});
 
 export default router;
