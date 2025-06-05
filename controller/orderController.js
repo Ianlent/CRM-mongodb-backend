@@ -363,6 +363,7 @@ export const createOrder = async (req, res) => {
 				firstName: customer.firstName,
 				lastName: customer.lastName,
 				phoneNumber: customer.phoneNumber,
+				address: customer.address, // Added address here
 			},
 			handlerId: assignedHandlerId,
 			handlerInfo: assignedHandlerInfo,

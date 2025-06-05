@@ -143,6 +143,7 @@ const customerInfoSubSchema = new mongoose.Schema(
 		firstName: { type: String, required: true },
 		lastName: { type: String, required: true },
 		phoneNumber: String,
+		address: { type: String, required: true },
 	},
 	{ _id: false }
 );
@@ -578,6 +579,7 @@ const generateSeedData = async (adminUser) => {
 				firstName: customer.firstName,
 				lastName: customer.lastName,
 				phoneNumber: customer.phoneNumber,
+				address: customer.address,
 			},
 			orderDate: getRandomDateInMay(),
 			handlerId: handler ? handler._id : null,
