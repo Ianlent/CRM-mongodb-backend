@@ -92,8 +92,10 @@ export const getCurrentOrdersForHandler = async (req, res) => {
 export const getAllOrders = async (req, res) => {
 	try {
 		const { start, end, page = 1, limit = 10 } = req.query;
-		const skip = (page - 1) * limit;
 
+		const parsedLimit = parseInt(limit);
+		const parsedPage = parseInt(page);
+		const skip = (parsedPage - 1) * parsedLimit;
 		// Input validation for dates
 
 		let startDate = start ? new Date(start) : null;
@@ -189,7 +191,7 @@ export const getAllOrders = async (req, res) => {
 		const orders = await Order.aggregate([
 			...pipeline, // Include the base pipeline
 			{ $skip: skip }, // Pagination
-			{ $limit: limit }, // Pagination
+			{ $limit: parsedLimit }, // Pagination
 		]);
 
 		// Count total documents matching the filters (including date range)
@@ -200,9 +202,9 @@ export const getAllOrders = async (req, res) => {
 			data: orders,
 			pagination: {
 				total_records: totalCount,
-				page: page,
-				limit: limit,
-				total_pages: Math.ceil(totalCount / limit),
+				page: parsedPage,
+				limit: parsedLimit,
+				total_pages: Math.ceil(totalCount / parsedLimit),
 			},
 		});
 	} catch (err) {
