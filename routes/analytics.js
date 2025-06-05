@@ -10,6 +10,6 @@ router.get("/financial", getFinancialSummary); //?start=2025-04-01&end=2025-04-3
 
 router.get("/traffic", getOrderTrafficSummary); //?start=2025-04-01&end=2025-04-30
 
-router.get("/service-popularity", getServicePopularity); //?type=revenue||quantity
+router.get("/service-popularity", getServicePopularity); //?type=revenue||quantity&start=2025-04-01&end=2025-04-30
 
 export default router;

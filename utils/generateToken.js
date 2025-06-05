@@ -10,5 +10,8 @@ export const generateToken = (user) => {
 		userRole: user.userRole, // Use userRole (camelCase)
 		userStatus: user.userStatus, // Use userStatus (camelCase)
 	};
-	return jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "1h" });
+	return jwt.sign(payload, process.env.JWT_SECRET, {
+		algorithm: "HS256",
+		expiresIn: "1h",
+	});
 };

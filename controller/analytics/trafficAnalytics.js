@@ -46,8 +46,8 @@ export const getOrderTrafficSummary = async (req, res) => {
 			startDate = new Date("1970-01-01T00:00:00Z"); // Epoch
 		}
 
-		// 2. Aggregate Daily Order Volume
-		const dailyOrderVolume = await Order.aggregate([
+		// 2. Aggregate Daily Order Volume and Status Counts
+		const dailyOrderSummary = await Order.aggregate([
 			{
 				// Match orders within the specified date range and not soft-deleted
 				$match: {
@@ -56,15 +56,35 @@ export const getOrderTrafficSummary = async (req, res) => {
 				},
 			},
 			{
-				// Group by date and count the number of orders for each day
+				// Group by date and count orders by their status
 				$group: {
 					_id: {
 						$dateToString: {
 							format: "%Y-%m-%d",
 							date: "$orderDate",
-						}, // Format orderDate to YYYY-MM-DD
+						},
 					},
-					count: { $sum: 1 }, // Count each document (order)
+					count: { $sum: 1 }, // Total orders for the day
+					completedCount: {
+						$sum: {
+							$cond: [
+								{ $eq: ["$orderStatus", "completed"] },
+								1,
+								0,
+							], // Count if status is 'completed'
+						},
+					},
+					cancelledCount: {
+						$sum: {
+							$cond: [
+								{ $eq: ["$orderStatus", "cancelled"] },
+								1,
+								0,
+							], // Count if status is 'cancelled'
+						},
+					},
+					// Add other statuses if needed, e.g.,
+					// pendingCount: { $sum: { $cond: [{ $eq: ["$status", "pending"] }, 1, 0] } },
 				},
 			},
 			{
@@ -73,10 +93,15 @@ export const getOrderTrafficSummary = async (req, res) => {
 			},
 		]);
 
-		// 3. Calculate Total Order Volume
-		let totalOrderVolume = 0;
-		dailyOrderVolume.forEach((day) => {
-			totalOrderVolume += day.count;
+		// 3. Calculate Overall Totals for different statuses
+		let overallTotalVolume = 0;
+		let overallTotalCompletedVolume = 0;
+		let overallTotalCancelledVolume = 0;
+
+		dailyOrderSummary.forEach((day) => {
+			overallTotalVolume += day.count;
+			overallTotalCompletedVolume += day.completedCount;
+			overallTotalCancelledVolume += day.cancelledCount;
 		});
 
 		// 4. Prepare and Send Response
@@ -84,11 +109,15 @@ export const getOrderTrafficSummary = async (req, res) => {
 			success: true,
 			message: "Order volume summary fetched successfully.",
 			data: {
-				dailyVolume: dailyOrderVolume.map((day) => ({
+				dailyVolume: dailyOrderSummary.map((day) => ({
 					date: day._id,
 					count: day.count,
-				})), // Rename _id to date
-				overallTotalVolume: totalOrderVolume,
+					completedCount: day.completedCount,
+					cancelledCount: day.cancelledCount,
+				})), // Rename _id to date and include other counts
+				overallTotalVolume: overallTotalVolume,
+				overallTotalCompletedVolume: overallTotalCompletedVolume,
+				overallTotalCancelledVolume: overallTotalCancelledVolume,
 			},
 		});
 	} catch (error) {
