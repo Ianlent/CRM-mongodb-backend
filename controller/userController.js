@@ -5,26 +5,41 @@ const saltRounds = 10;
 
 // Fetch all non-deleted users
 export const getAllUsers = async (req, res) => {
-	const { page = 1, limit = 10 } = req.query;
-	const skip = (page - 1) * limit;
+	const { page = 1, limit = 10, search } = req.query; // Destructure 'search' from req.query
+	const parsedPage = parseInt(page); // Parse page to number
+	const parsedLimit = parseInt(limit); // Parse limit to number
+
+	const skip = (parsedPage - 1) * parsedLimit;
+
 	try {
-		const users = await User.find({ isDeleted: false })
+		let query = { isDeleted: false }; // Base query to exclude deleted users
+
+		// If a search term is provided, add it to the query
+		if (search) {
+			// Use Mongoose's $regex for case-insensitive partial matching on username
+			// $options: 'i' makes the search case-insensitive
+			query.username = { $regex: search, $options: "i" };
+		}
+
+		const users = await User.find(query) // Apply the constructed query
 			.sort({ _id: 1 }) // Sort by _id ascending
 			.skip(skip)
-			.limit(limit)
+			.limit(parsedLimit) // Use parsedLimit here
 			.select(
 				"username userRole userStatus phoneNumber createdAt updatedAt"
 			); // Select specific fields
 
-		const totalCount = await User.countDocuments({ isDeleted: false });
+		// Count total documents matching the search query (if any)
+		const totalCount = await User.countDocuments(query);
+
 		return res.status(200).json({
 			success: true,
 			data: users,
 			pagination: {
 				total_records: totalCount,
-				page: page,
-				limit: limit,
-				total_pages: Math.ceil(totalCount / limit),
+				page: parsedPage,
+				limit: parsedLimit,
+				total_pages: Math.ceil(totalCount / parsedLimit),
 			},
 		});
 	} catch (err) {

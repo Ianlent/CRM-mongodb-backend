@@ -121,20 +121,3 @@ export const checkHandlerParamValidation = [
 		.isMongoId()
 		.withMessage("Handler ID must be a valid MongoDB ID"),
 ];
-
-export const getOrdersByDateRangeValidation = [
-	body("start")
-		.optional()
-		.isISO8601()
-		.withMessage("Start date must be a valid ISO 8601 date string"),
-	body("end")
-		.optional()
-		.isISO8601()
-		.withMessage("End date must be a valid ISO 8601 date string"),
-	body().custom((value, { req }) => {
-		if (!req.query.start && !req.query.end) {
-			throw new Error("Either start or end date is required.");
-		}
-		return true;
-	}),
-];

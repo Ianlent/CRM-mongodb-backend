@@ -6,7 +6,6 @@ import {
 	getAllOrders,
 	getCurrentOrdersForHandler,
 	getOrderDetailsById,
-	getOrdersByDateRange,
 	createOrder,
 	updateOrderStatus,
 	updateOrderByID,
@@ -27,7 +26,6 @@ import {
 	updateServiceInOrderValidation,
 	removeServiceFromOrderValidation,
 	checkHandlerParamValidation,
-	getOrdersByDateRangeValidation,
 } from "../middleware/validators/orderValidator.js";
 import { validateIdParam } from "../middleware/validators/idValidator.js";
 
@@ -89,16 +87,8 @@ router.delete(
 // Admin or manager only routes
 router.use(authorizeRoles(["admin", "manager"]));
 
-// GET all orders (with optional pagination)
-router.get("/", getAllOrders);
-
 // GET orders by date range
-router.get(
-	"/search",
-	getOrdersByDateRangeValidation, // Apply specific validation for date range
-	handleValidationErrors,
-	getOrdersByDateRange
-);
+router.get("/", handleValidationErrors, getAllOrders);
 
 // PUT update an order by ID (handler, discount, status, etc.)
 router.put(

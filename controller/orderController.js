@@ -8,59 +8,6 @@ import mongoose from "mongoose";
 // Dotenv should ideally be configured once in your main app entry point (e.g., index.js)
 // If MAGNIFICATION_FACTOR is used for calculation, ensure it's converted to a number.
 
-export const getAllOrders = async (req, res) => {
-	try {
-		const page = parseInt(req.query.page) || 1;
-		const limit = parseInt(req.query.limit) || 10;
-		const skip = (page - 1) * limit;
-
-		// Aggregation pipeline to calculate total_order_price and filter
-		const pipeline = [
-			{ $match: { isDeleted: false } }, // Filter out soft-deleted orders
-			{ $sort: { orderDate: -1 } }, // Sort by order_date DESC
-			{ $skip: skip }, // Pagination
-			{ $limit: limit }, // Pagination
-			{
-				$project: {
-					// Select and rename fields, calculate total price
-					_id: 0, // Exclude _id from the root document as it will be orderId
-					orderId: "$_id",
-					customerId: "$customerId",
-					customerInfo: "$customerInfo", // Embedded customer details
-					orderDate: "$orderDate",
-					handlerId: "$handlerId",
-					handlerInfo: "$handlerInfo", // Embedded handler details
-					orderStatus: "$orderStatus",
-					discountId: "$discountId",
-					discountInfo: "$discountInfo", // Embedded discount details
-					services: "$services", // Keep embedded services for client if needed
-					total_order_price: { $sum: "$services.totalPrice" }, // Calculate total price
-				},
-			},
-		];
-
-		const orders = await Order.aggregate(pipeline);
-
-		const totalCount = await Order.countDocuments({ isDeleted: false });
-
-		return res.status(200).json({
-			success: true,
-			data: orders,
-			pagination: {
-				total_record: totalCount,
-				page: page,
-				limit: limit,
-				total_pages: Math.ceil(totalCount / limit),
-			},
-		});
-	} catch (err) {
-		console.error("Error in getAllOrders:", err);
-		return res
-			.status(500)
-			.json({ success: false, message: "Failed to fetch orders" });
-	}
-};
-
 export const getCurrentOrdersForHandler = async (req, res) => {
 	const { handler_id } = req.params; // Note: req.params.handler_id is a string, convert to ObjectId if needed for direct comparison
 	const user_id = req.user?._id; // Access _id from the authenticated user object
@@ -142,84 +89,124 @@ export const getCurrentOrdersForHandler = async (req, res) => {
 	}
 };
 
-export const getOrdersByDateRange = async (req, res) => {
-	let { start, end } = req.query;
-
-	if (!start && !end) {
-		return res.status(400).json({
-			success: false,
-			message: "Start or end date is required.",
-		});
-	}
-
-	let startDate = start ? new Date(start) : null;
-	let endDate = end ? new Date(end) : null;
-
-	if (
-		(startDate && isNaN(startDate.getTime())) ||
-		(endDate && isNaN(endDate.getTime()))
-	) {
-		return res
-			.status(400)
-			.json({ success: false, message: "Invalid date format." });
-	}
-
-	if (startDate && endDate && startDate > endDate) {
-		return res.status(400).json({
-			success: false,
-			message: "Start date cannot be after end date.",
-		});
-	}
-
-	// Adjust dates for full day range
-	if (startDate) startDate.setHours(0, 0, 0, 0);
-	if (endDate) endDate.setHours(23, 59, 59, 999);
-
-	// Default dates if only one is provided
-	if (startDate && !endDate) {
-		endDate = new Date(); // Today
-		endDate.setHours(23, 59, 59, 999);
-	}
-
-	if (!startDate && endDate) {
-		startDate = new Date("1970-01-01T00:00:00Z"); // Epoch
-	}
-
-	const matchQuery = {
-		isDeleted: false,
-		orderDate: {
-			// Use Mongoose's date range query operators
-			...(startDate && { $gte: startDate }), // Greater than or equal to start date
-			...(endDate && { $lte: endDate }), // Less than or equal to end date
-		},
-	};
-
+export const getAllOrders = async (req, res) => {
 	try {
+		const { start, end, page = 1, limit = 10 } = req.query;
+		const skip = (page - 1) * limit;
+
+		// Input validation for dates
+
+		let startDate = start ? new Date(start) : null;
+		let endDate = end ? new Date(end) : null;
+
+		if (
+			(startDate && isNaN(startDate.getTime())) ||
+			(endDate && isNaN(endDate.getTime()))
+		) {
+			return res
+				.status(400)
+				.json({ success: false, message: "Invalid date format." });
+		}
+
+		if (startDate && endDate && startDate > endDate) {
+			return res.status(400).json({
+				success: false,
+				message: "Start date cannot be after end date.",
+			});
+		}
+
+		// Prevent end date from being in the future relative to the current date
+		const currentDate = new Date();
+		currentDate.setHours(23, 59, 59, 999); // Set to end of current day for comparison
+
+		if (endDate && endDate > currentDate) {
+			return res.status(400).json({
+				success: false,
+				message: "End date cannot be in the future.",
+			});
+		}
+
+		// Adjust dates for full day range
+		if (startDate) startDate.setHours(0, 0, 0, 0);
+		if (endDate) endDate.setHours(23, 59, 59, 999);
+
+		// Default dates if only one is provided (or if none and you want a default range)
+		// For general 'getAllOrders', if no dates are provided, we'll fetch all non-deleted.
+		// If only one is provided, we default the other end of the range.
+		if (startDate && !endDate) {
+			endDate = new Date(); // Default end to today
+			endDate.setHours(23, 59, 59, 999);
+		}
+
+		if (!startDate && endDate) {
+			startDate = new Date("1970-01-01T00:00:00Z"); // Default start to epoch
+		}
+		// --- End of your provided date input handling snippet ---
+
+		// Base match for filtering out soft-deleted orders
+		let matchStage = { isDeleted: false };
+
+		// Add date range filtering to the match stage if dates are present
+		if (startDate && endDate) {
+			// Apply date filter only if both are set (after defaults)
+			matchStage.orderDate = {
+				$gte: startDate,
+				$lte: endDate,
+			};
+		} else if (startDate) {
+			// If only startDate is provided after defaults
+			matchStage.orderDate = { $gte: startDate };
+		} else if (endDate) {
+			// If only endDate is provided after defaults
+			matchStage.orderDate = { $lte: endDate };
+		}
+
+		// Aggregation pipeline
 		const pipeline = [
-			{ $match: matchQuery },
-			{ $sort: { orderDate: -1 } },
+			{ $match: matchStage }, // Apply initial filters including date range
+			{ $sort: { orderDate: -1 } }, // Sort by order_date DESC
 			{
 				$project: {
-					_id: 0,
+					// Select and rename fields, calculate total price
+					_id: 0, // Exclude _id from the root document as it will be orderId
 					orderId: "$_id",
 					customerId: "$customerId",
-					customerInfo: "$customerInfo",
+					customerInfo: "$customerInfo", // Embedded customer details
 					orderDate: "$orderDate",
 					handlerId: "$handlerId",
-					handlerInfo: "$handlerInfo",
+					handlerInfo: "$handlerInfo", // Embedded handler details
 					orderStatus: "$orderStatus",
 					discountId: "$discountId",
-					discountInfo: "$discountInfo",
+					discountInfo: "$discountInfo", // Embedded discount details
+					services: "$services", // Keep embedded services for client if needed
+					// Calculate total_order_price using $sum on services.totalPrice array
 					total_order_price: { $sum: "$services.totalPrice" },
-					services: 0, // Exclude full services array if not needed in summary
 				},
 			},
 		];
 
-		const orders = await Order.aggregate(pipeline);
-		return res.status(200).json({ success: true, data: orders });
+		// Execute aggregation for paginated orders
+		const orders = await Order.aggregate([
+			...pipeline, // Include the base pipeline
+			{ $skip: skip }, // Pagination
+			{ $limit: limit }, // Pagination
+		]);
+
+		// Count total documents matching the filters (including date range)
+		const totalCount = await Order.countDocuments(matchStage); // Use the same matchStage for counting
+
+		return res.status(200).json({
+			success: true,
+			data: orders,
+			pagination: {
+				total_records: totalCount,
+				page: page,
+				limit: limit,
+				total_pages: Math.ceil(totalCount / limit),
+			},
+		});
 	} catch (err) {
-		console.error("Error in getOrdersByDateRange:", err);
+		console.error("Error in getAllOrders:", err);
 		return res
 			.status(500)
 			.json({ success: false, message: "Failed to fetch orders" });
