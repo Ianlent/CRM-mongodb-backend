@@ -64,70 +64,72 @@ export const getCustomerById = async (req, res) => {
 
 export const getCustomerByPhoneFirstLast = async (req, res) => {
 	try {
-		let { phoneNumber = "", firstName = "", lastName = "" } = req.body; // Use camelCase for consistency
-		const { page = 1, limit = 10 } = req.query;
-		const skip = (page - 1) * limit;
+		const { page, limit, phoneNumber, firstName, lastName } = req.query; // 'name' parameter removed here
 
-		const query = {
-			isDeleted: false,
-		};
+		const parsedPage = parseInt(page);
+		const parsedLimit = parseInt(limit);
+		const skip = (parsedPage - 1) * parsedLimit;
 
-		// Only add the regex filter if the input is not an empty string
-		if (phoneNumber) {
-			// This checks if phoneNumber is NOT an empty string
-			query.phoneNumber = {
-				$regex: new RegExp(`^${escapeRegExp(phoneNumber)}`, "i"),
-			};
-		}
-		if (firstName) {
-			// This checks if firstName is NOT an empty string
-			query.firstName = {
-				$regex: new RegExp(`^${escapeRegExp(firstName)}`, "i"),
-			};
-		}
-		if (lastName) {
-			// This checks if lastName is NOT an empty string
-			query.lastName = {
-				$regex: new RegExp(`^${escapeRegExp(lastName)}`, "i"),
-			};
+		let queryConditions = [{ isDeleted: false }]; // Start with base condition
+
+		// Important: Check for existence AND non-empty string after trimming
+		const hasPhoneNumber = phoneNumber && String(phoneNumber).trim() !== "";
+		const hasFirstName = firstName && String(firstName).trim() !== "";
+		const hasLastName = lastName && String(lastName).trim() !== "";
+
+		if (hasPhoneNumber) {
+			queryConditions.push({ phoneNumber: new RegExp(phoneNumber, "i") });
+
+			if (hasFirstName) {
+				queryConditions.push({ firstName: new RegExp(firstName, "i") });
+			}
+			if (hasLastName) {
+				queryConditions.push({ lastName: new RegExp(lastName, "i") });
+			}
+		} else if (hasFirstName || hasLastName) {
+			const nameSpecificConditions = [];
+			if (hasFirstName) {
+				nameSpecificConditions.push({
+					firstName: new RegExp(firstName, "i"),
+				});
+			}
+			if (hasLastName) {
+				nameSpecificConditions.push({
+					lastName: new RegExp(lastName, "i"),
+				});
+			}
+			if (nameSpecificConditions.length > 0) {
+				queryConditions.push({ $and: nameSpecificConditions }); // AND logic for specific name parts
+			}
 		}
 
-		const customers = await Customer.find(query)
-			.sort({ firstName: 1, lastName: 1 })
+		// The final query uses $and to combine all conditions
+		const finalQuery = { $and: queryConditions };
+
+		const customers = await Customer.find(finalQuery)
+			.sort({ _id: 1 }) // Sort by _id ascending
 			.skip(skip)
-			.limit(limit)
+			.limit(parsedLimit)
 			.select("firstName lastName phoneNumber address points");
 
-		const totalCount = await Customer.countDocuments(query);
-
-		if (totalCount === 0) {
-			// If absolutely no matching customers exist
-			return res.status(200).json({
-				success: true,
-				data: [], // No data
-				canCreate: true, // Suggest creation
-				pagination: {
-					// Still provide pagination info, even if empty
-					total_records: 0,
-					page: parseInt(page),
-					limit: parseInt(limit),
-					total_pages: 0,
-				},
-				message:
-					"No matching customers found. You can create a new one.",
+		if (!customers || customers.length === 0) {
+			return res.status(404).json({
+				success: false,
+				message: "No customers found matching the specified criteria.",
 			});
 		}
 
-		return res.status(200).json({
+		const totalCount = await Customer.countDocuments(finalQuery);
+
+		res.status(200).json({
 			success: true,
 			data: customers,
 			pagination: {
 				total_records: totalCount,
-				page,
-				limit,
-				total_pages: Math.ceil(totalCount / limit),
+				page: parsedPage,
+				limit: parsedLimit,
+				total_pages: Math.ceil(totalCount / parsedLimit),
 			},
-			message: "Customers found successfully",
 		});
 	} catch (err) {
 		console.error(err.message);

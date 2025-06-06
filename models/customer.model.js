@@ -46,6 +46,7 @@ const customerSchema = new mongoose.Schema(
 // Index for search on multiple fields (case-insensitive approximation)
 customerSchema.index(
 	{
+		isDeleted: 1,
 		phoneNumber: 1, // Ascending order
 		firstName: 1,
 		lastName: 1,
@@ -53,6 +54,14 @@ customerSchema.index(
 	{
 		collation: { locale: "en", strength: 2 }, // strength:2 for case-insensitive, diacritic-sensitive comparison
 	}
+);
+customerSchema.index(
+	{ isDeleted: 1, firstName: 1 },
+	{ collation: { locale: "en", strength: 2 } }
+);
+customerSchema.index(
+	{ isDeleted: 1, lastName: 1 },
+	{ collation: { locale: "en", strength: 2 } }
 );
 
 export default mongoose.model("Customer", customerSchema);

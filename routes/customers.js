@@ -38,6 +38,7 @@ router.post(
 	createCustomer
 );
 
+router.use(authorizeRoles(["admin", "manager"]));
 // //put
 router.put(
 	"/:id",
@@ -52,7 +53,6 @@ router.delete(
 	"/:id",
 	validateIdParam,
 	handleValidationErrors,
-	authorizeRoles(["admin"]),
 	deleteCustomerByID
 );
 
