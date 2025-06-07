@@ -37,7 +37,6 @@ export const createDiscountValidation = [
 export const updateDiscountValidation = [
 	body("discountName")
 		.optional()
-		.withMessage("Discount name is required")
 		.isString()
 		.withMessage("Discount name must be a string")
 		.isLength({ max: 30 })
