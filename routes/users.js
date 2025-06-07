@@ -23,7 +23,7 @@ import authorizeRoles from "../middleware/auth/authorizeRoles.js";
 //////////////////////////////////////////////////////////////////////
 
 //GET
-router.get("/", authorizeRoles(["admin", "manager"]), getAllUsers); //?page=1&limit=10
+router.get("/", authorizeRoles(["admin", "manager"]), getAllUsers); //?page=1&limit=6&search=username
 
 router.get("/:id", validateIdParam, handleValidationErrors, getUserById);
 

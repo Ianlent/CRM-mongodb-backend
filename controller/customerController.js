@@ -64,7 +64,7 @@ export const getCustomerById = async (req, res) => {
 
 export const getCustomerByPhoneFirstLast = async (req, res) => {
 	try {
-		const { page, limit, phoneNumber, firstName, lastName } = req.query; // 'name' parameter removed here
+		let { page, limit, phoneNumber, firstName, lastName } = req.query;
 
 		const parsedPage = parseInt(page);
 		const parsedLimit = parseInt(limit);
@@ -78,8 +78,10 @@ export const getCustomerByPhoneFirstLast = async (req, res) => {
 		const hasLastName = lastName && String(lastName).trim() !== "";
 
 		if (hasPhoneNumber) {
+			// Apply regex for partial matching, case-insensitive
 			queryConditions.push({ phoneNumber: new RegExp(phoneNumber, "i") });
 
+			// If phone number is provided, AND firstName and/or lastName can refine the search
 			if (hasFirstName) {
 				queryConditions.push({ firstName: new RegExp(firstName, "i") });
 			}
@@ -87,6 +89,7 @@ export const getCustomerByPhoneFirstLast = async (req, res) => {
 				queryConditions.push({ lastName: new RegExp(lastName, "i") });
 			}
 		} else if (hasFirstName || hasLastName) {
+			// If no phone number, but first and/or last name are provided
 			const nameSpecificConditions = [];
 			if (hasFirstName) {
 				nameSpecificConditions.push({
@@ -99,11 +102,18 @@ export const getCustomerByPhoneFirstLast = async (req, res) => {
 				});
 			}
 			if (nameSpecificConditions.length > 0) {
-				queryConditions.push({ $and: nameSpecificConditions }); // AND logic for specific name parts
+				// Combine name conditions with $and
+				queryConditions.push({ $and: nameSpecificConditions });
 			}
+		} else {
+			// If no search parameters are provided, return all non-deleted customers.
+			// The initial { isDeleted: false } condition handles this.
+			// No additional queryConditions are needed here.
 		}
 
-		// The final query uses $and to combine all conditions
+		// The final query uses $and to combine all top-level conditions.
+		// If no search parameters were provided (and thus queryConditions only contains { isDeleted: false }),
+		// then it effectively queries for all non-deleted customers.
 		const finalQuery = { $and: queryConditions };
 
 		const customers = await Customer.find(finalQuery)

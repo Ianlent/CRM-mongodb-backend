@@ -30,6 +30,6 @@ const serviceSchema = new mongoose.Schema(
 );
 
 // Text index for partial matching (similar to pg_trgm)
-serviceSchema.index({ serviceName: "text" });
+serviceSchema.index({ serviceName: 1 });
 
 export default mongoose.model("Service", serviceSchema);

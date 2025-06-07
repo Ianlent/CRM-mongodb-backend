@@ -4,8 +4,7 @@ import { handleValidationErrors } from "../middleware/handleValidationErrors.js"
 
 // controllers /////////////////////////////////////////////////////////
 import {
-	getAllServices,
-	getServicesByName,
+	getServices,
 	getServiceById,
 	createService,
 	updateServiceById,
@@ -26,10 +25,7 @@ import authorizeRoles from "../middleware/auth/authorizeRoles.js";
 const router = express.Router();
 
 // GET all services (with optional pagination)
-router.get("/", getAllServices); // ?page=1&limit=10
-
-// GET services by name
-router.get("/search", getServicesByName); // ?name=abc&page=1&limit=10
+router.get("/", getServices); // ?name=abc&page=1&limit=10
 
 // GET a single service by ID
 router.get("/:id", validateIdParam, handleValidationErrors, getServiceById);

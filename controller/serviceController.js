@@ -1,61 +1,31 @@
 import Service from "../models/service.model.js"; // Import the Mongoose Service model
 
 // GET all services with optional pagination
-export const getAllServices = async (req, res) => {
+export const getServices = async (req, res) => {
 	try {
-		const { page = 1, limit = 10 } = req.query;
+		const { search = "", page = 1, limit = 10 } = req.query;
 		const skip = (page - 1) * limit;
 
-		// Find all non-deleted services with pagination
-		const services = await Service.find({ isDeleted: false })
-			.sort({ _id: 1 }) // Sort by _id ascending
-			.skip(skip)
-			.limit(limit)
-			.select("serviceName serviceUnit servicePricePerUnit"); // Select specific fields
-
-		// Get total count for pagination
-		const totalCount = await Service.countDocuments({ isDeleted: false });
-
-		return res.status(200).json({
-			success: true,
-			data: services,
-			pagination: {
-				total_records: totalCount,
-				page: page,
-				limit: limit,
-				total_pages: Math.ceil(totalCount / limit), // Add total_pages for convenience
-			},
-		});
-	} catch (err) {
-		console.error(err.message);
-		return res
-			.status(500)
-			.json({ success: false, message: "Internal Server Error" });
-	}
-};
-
-export const getServicesByName = async (req, res) => {
-	try {
-		const { name = "", page = 1, limit = 10 } = req.query;
-		const skip = (page - 1) * limit;
-
-		// Use Mongoose's text search for serviceName, which leverages the text index
-		// or regex for partial, case-insensitive matching if text index is not desired for exact starts
-		const query = {
+		let query = {
 			isDeleted: false,
-			// For partial match at the beginning, similar to `ILIKE 'name%'`
-			serviceName: { $regex: new RegExp(`^${name}`, "i") },
-			// If you want broader "contains" search using the text index, use:
-			// $text: { $search: name }
-			// Note: For text index, you might want to consider scoring for relevance.
 		};
 
+		if (search) {
+			// Use '^' to match from the beginning of the string
+			query.serviceName = { $regex: `^${search}`, $options: "i" }; // 'i' for case-insensitive
+		}
+
+		// For "starts with" queries, sorting by serviceName is often desired
+		let sortOrder = { serviceName: 1 }; // Sort by serviceName ascending by default
+
+		// Find services based on the constructed query, with pagination
 		const services = await Service.find(query)
-			.sort({ _id: 1 }) // Or by relevance if using text search: { score: { $meta: "textScore" } }
+			.sort(sortOrder)
 			.skip(skip)
 			.limit(limit)
 			.select("serviceName serviceUnit servicePricePerUnit");
 
+		// Get total count for pagination based on the same query
 		const totalCount = await Service.countDocuments(query);
 
 		return res.status(200).json({

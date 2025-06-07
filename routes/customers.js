@@ -24,9 +24,9 @@ import authorizeRoles from "../middleware/auth/authorizeRoles.js";
 const router = express.Router();
 
 //get
-router.get("/", getAllCustomers); //?page=1&limit=10
+router.get("/", getAllCustomers); //?page=1&limit=6
 
-router.get("/search", getCustomerByPhoneFirstLast); //?page=1&limit=10
+router.get("/search", getCustomerByPhoneFirstLast); //?page=1&limit=6
 
 router.get("/:id", validateIdParam, handleValidationErrors, getCustomerById);
 
