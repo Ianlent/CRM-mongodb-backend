@@ -457,12 +457,24 @@ export const updateOrderStatus = async (req, res) => {
 			});
 		}
 
+		const updateFields = { orderStatus: orderStatus };
+		// Set completedOn if the status is changing to 'completed'
+		if (orderStatus === "completed") {
+			updateFields.completedOn = new Date();
+		} else if (
+			order.orderStatus === "completed" &&
+			orderStatus !== "completed"
+		) {
+			// If status is changing from 'completed' to something else, clear completedOn
+			updateFields.completedOn = null;
+		}
+
 		// Update order status
 		const updatedOrder = await Order.findOneAndUpdate(
 			{ _id: id, isDeleted: false },
-			{ $set: { orderStatus: orderStatus } },
-			{ new: true, runValidators: true } // Run validators to ensure status is valid enum
-		).select("_id orderStatus");
+			{ $set: updateFields },
+			{ new: true, runValidators: true } // Return updated doc, run validators
+		).select("_id orderStatus completedOn"); // Select completedOn to be returned
 
 		if (!updatedOrder) {
 			return res
@@ -495,8 +507,35 @@ export const updateOrderByID = async (req, res) => {
 		}
 
 		const updateFields = {};
+		// Fetch the existing order to check current status for completedOn logic
+		const existingOrder = await Order.findById(id).select(
+			"orderStatus completedOn"
+		);
+
+		if (!existingOrder || existingOrder.isDeleted) {
+			return res.status(404).json({
+				success: false,
+				message: "Order not found or is deleted",
+			});
+		}
+
 		// Only update if provided and different from current (optional optimization)
-		if (orderStatus !== undefined) updateFields.orderStatus = orderStatus;
+		if (
+			orderStatus !== undefined &&
+			orderStatus !== existingOrder.orderStatus
+		) {
+			updateFields.orderStatus = orderStatus;
+			// Logic for completedOn based on status change
+			if (orderStatus === "completed") {
+				updateFields.completedOn = new Date();
+			} else if (
+				existingOrder.orderStatus === "completed" &&
+				orderStatus !== "completed"
+			) {
+				updateFields.completedOn = null; // Clear completedOn if status changes from completed
+			}
+		}
+
 		if (handlerId !== undefined) {
 			// Validate handlerId if present and not null
 			if (handlerId && !mongoose.Types.ObjectId.isValid(handlerId)) {
@@ -567,7 +606,7 @@ export const updateOrderByID = async (req, res) => {
 			{ $set: updateFields },
 			{ new: true, runValidators: true } // Return updated doc, run validators
 		).select(
-			"customerId orderDate handlerId orderStatus discountId customerInfo handlerInfo discountInfo"
+			"customerId orderDate handlerId orderStatus discountId customerInfo handlerInfo discountInfo completedOn" // Include completedOn in select
 		); // Select fields to return
 
 		if (!updatedOrder) {
@@ -625,7 +664,7 @@ export const addServiceToOrder = async (req, res) => {
 	const { order_id } = req.params; // order_id from params, use camelCase for internal use
 	const { numberOfUnit, serviceId } = req.body; // use camelCase
 	const userRole = req.user?.userRole;
-	const userId = req.user?._id; // Get ObjectId from authenticated user
+	const userId = req.user?._id;
 
 	try {
 		if (!mongoose.Types.ObjectId.isValid(order_id)) {

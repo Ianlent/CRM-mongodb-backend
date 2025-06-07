@@ -57,12 +57,12 @@ export const getFinancialSummary = async (req, res) => {
 			startDate = new Date("1970-01-01T00:00:00Z"); // Epoch
 		}
 
-		// Aggregate daily revenue
+		// Aggregate daily revenue with detailed orders, based on completedOn date
 		const dailyRevenue = await Order.aggregate([
 			{
 				$match: {
 					orderStatus: "completed",
-					orderDate: { $gte: startDate, $lte: endDate },
+					completedOn: { $gte: startDate, $lte: endDate }, // Changed to completedOn
 					isDeleted: false,
 				},
 			},
@@ -127,10 +127,17 @@ export const getFinancialSummary = async (req, res) => {
 					_id: {
 						$dateToString: {
 							format: "%Y-%m-%d",
-							date: "$orderDate",
+							date: "$completedOn", // Changed to completedOn
 						},
 					},
 					totalRevenue: { $sum: "$orderNetTotal" }, // Sum net order totals by date
+					orders: {
+						$push: {
+							_id: "$_id",
+							customerInfo: "$customerInfo", // Kept customer details
+							netTotal: "$orderNetTotal", // Kept net total
+						},
+					},
 				},
 			},
 			{
@@ -138,7 +145,7 @@ export const getFinancialSummary = async (req, res) => {
 			},
 		]);
 
-		// Aggregate daily expenses
+		// Aggregate daily expenses with detailed expenses
 		const dailyExpenses = await Expense.aggregate([
 			{
 				$match: {
@@ -155,6 +162,13 @@ export const getFinancialSummary = async (req, res) => {
 						},
 					},
 					totalExpenses: { $sum: "$amount" }, // Sum expense amounts by date
+					expenses: {
+						$push: {
+							_id: "$_id",
+							expenseDescription: "$expenseDescription",
+							amount: "$amount",
+						},
+					},
 				},
 			},
 			{
@@ -171,7 +185,9 @@ export const getFinancialSummary = async (req, res) => {
 			financialSummary[rev._id] = {
 				date: rev._id,
 				revenue: rev.totalRevenue,
+				orders: rev.orders, // Store the orders array
 				expenses: 0, // Initialize expenses to 0
+				expenseDetails: [], // Initialize expense details array
 				profit: 0,
 				profitMargin: 0,
 			};
@@ -183,12 +199,15 @@ export const getFinancialSummary = async (req, res) => {
 				financialSummary[exp._id] = {
 					date: exp._id,
 					revenue: 0, // Initialize revenue to 0
+					orders: [], // Initialize orders array
 					expenses: exp.totalExpenses,
+					expenseDetails: exp.expenses, // Store the expenses array
 					profit: 0,
 					profitMargin: 0,
 				};
 			} else {
 				financialSummary[exp._id].expenses = exp.totalExpenses;
+				financialSummary[exp._id].expenseDetails = exp.expenses; // Store the expenses array
 			}
 			overallTotalExpenses += exp.totalExpenses;
 		});

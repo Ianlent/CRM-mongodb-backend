@@ -122,6 +122,9 @@ const orderSchema = new mongoose.Schema(
 			type: [orderServiceSubSchema],
 			default: [],
 		},
+		completedOn: {
+			type: Date,
+		},
 		isDeleted: {
 			type: Boolean,
 			default: false,
