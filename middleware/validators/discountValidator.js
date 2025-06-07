@@ -3,6 +3,16 @@ import { body } from "express-validator";
 const discountTypes = ["percent", "fixed"]; // example, adjust to your actual enum
 
 export const createDiscountValidation = [
+	body("discountName")
+		.exists()
+		.withMessage("Discount name is required")
+		.isString()
+		.withMessage("Discount name must be a string")
+		.isLength({ max: 30 })
+		.withMessage("Discount name can't be longer than 30 characters")
+		.trim()
+		.escape(),
+
 	body("requiredPoints")
 		.exists()
 		.withMessage("Required points is required")
@@ -25,6 +35,16 @@ export const createDiscountValidation = [
 ];
 
 export const updateDiscountValidation = [
+	body("discountName")
+		.optional()
+		.withMessage("Discount name is required")
+		.isString()
+		.withMessage("Discount name must be a string")
+		.isLength({ max: 30 })
+		.withMessage("Discount name can't be longer than 30 characters")
+		.trim()
+		.escape(),
+
 	body("requiredPoints")
 		.optional()
 		.isInt({ min: 0 })

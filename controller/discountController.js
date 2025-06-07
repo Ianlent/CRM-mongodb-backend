@@ -10,7 +10,9 @@ export const getAllDiscounts = async (req, res) => {
 			.sort({ createdAt: -1 }) // Sort by createdAt descending
 			.skip(skip)
 			.limit(limit)
-			.select("requiredPoints discountType amount createdAt updatedAt"); // Select specific fields
+			.select(
+				"discountName requiredPoints discountType amount createdAt updatedAt"
+			); // Select specific fields
 
 		// Get total count for pagination
 		const totalCount = await Discount.countDocuments({ isDeleted: false });
@@ -19,7 +21,7 @@ export const getAllDiscounts = async (req, res) => {
 			success: true,
 			data: discounts,
 			pagination: {
-				total_record: totalCount,
+				total_records: totalCount,
 				page: page,
 				limit: limit,
 				total_pages: Math.ceil(totalCount / limit), // Add total_pages for convenience
@@ -41,7 +43,9 @@ export const getDiscountById = async (req, res) => {
 		const discount = await Discount.findOne({
 			_id: id,
 			isDeleted: false,
-		}).select("requiredPoints discountType amount createdAt updatedAt");
+		}).select(
+			"discountName requiredPoints discountType amount createdAt updatedAt"
+		);
 
 		if (!discount) {
 			// Mongoose returns null if no document is found
@@ -62,10 +66,11 @@ export const getDiscountById = async (req, res) => {
 
 export const createDiscount = async (req, res) => {
 	try {
-		const { requiredPoints, discountType, amount } = req.body; // Use camelCase
+		const { discountName, requiredPoints, discountType, amount } = req.body; // Use camelCase
 
 		// Create a new Discount document
 		const newDiscount = new Discount({
+			discountName,
 			requiredPoints,
 			discountType,
 			amount,
@@ -91,10 +96,12 @@ export const createDiscount = async (req, res) => {
 export const updateDiscountById = async (req, res) => {
 	try {
 		const { id } = req.params;
-		const { requiredPoints, discountType, amount } = req.body; // Use camelCase
+		const { discountName, requiredPoints, discountType, amount } = req.body; // Use camelCase
 
 		// Build the update object dynamically
 		const updateFields = {};
+		if (discountName !== undefined)
+			updateFields.discountName = discountName;
 		if (requiredPoints !== undefined)
 			updateFields.requiredPoints = requiredPoints;
 		if (discountType !== undefined)
@@ -112,7 +119,9 @@ export const updateDiscountById = async (req, res) => {
 			{ _id: id, isDeleted: false }, // Query
 			{ $set: updateFields }, // Update operation using $set
 			{ new: true, runValidators: true } // Options
-		).select("requiredPoints discountType amount createdAt updatedAt");
+		).select(
+			"discountName requiredPoints discountType amount createdAt updatedAt"
+		);
 
 		if (!updatedDiscount) {
 			return res.status(404).json({

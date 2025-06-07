@@ -7,16 +7,14 @@ import dotenv from "dotenv";
 import User from "./models/user.model.js";
 import Customer from "./models/customer.model.js";
 import Service from "./models/service.model.js";
-import Discount from "./models/discount.model.js";
+import Discount from "./models/discount.model.js"; // Your Discount model
 import Expense from "./models/expense.model.js";
 import Order from "./models/order.model.js";
 
 dotenv.config(); // Load environment variables from .env file
 
 // --- Configuration ---
-const MONGODB_URI =
-	process.env.MONGO_URI_DEV ||
-	"mongodb://localhost:27017/laundry_business_db"; // Fallback if .env not set
+const MONGODB_URI = process.env.MONGO_URI_DEV;
 const CLEAR_EXISTING_DATA = true; // Set to true to clear all collections before seeding
 
 // --- Define date boundaries (May 1st, 2025, to today) ---
@@ -283,8 +281,19 @@ const generateSeedData = async (adminUser) => {
 	}
 
 	// 4. Discounts
+	const discountNames = [
+		"Loyalty Member",
+		"First Order Bonus",
+		"Weekend Saver",
+		"Large Order Discount",
+		"New Customer Welcome",
+		"Seasonal Special",
+		"Holiday Promo",
+		"Referral Friend",
+	];
 	seed.discounts = [];
-	for (let i = 0; i < 4; i++) {
+	for (let i = 0; i < discountNames.length; i++) {
+		// Loop through all defined discount names
 		const createdAt = getRandomDate();
 		let updatedAt = getRandomDate();
 		if (updatedAt < createdAt) {
@@ -294,11 +303,21 @@ const generateSeedData = async (adminUser) => {
 			);
 		}
 
+		// Ensure unique requiredPoints to avoid duplicates if iterating with fixed increments
+		const requiredPoints = (i + 1) * 50 + Math.floor(Math.random() * 20); // Add some randomness
+		const discountType = Math.random() > 0.5 ? "percent" : "fixed";
+		const amount =
+			discountType === "percent"
+				? Math.floor(Math.random() * (20 - 5 + 1)) + 5
+				: Math.floor(Math.random() * (50 - 10 + 1)) + 10; // 5-20% or 10-50 fixed
+
 		seed.discounts.push({
 			_id: generateObjectId(),
-			requiredPoints: (i + 1) * 50,
-			discountType: i % 2 === 0 ? "percent" : "fixed",
-			amount: i % 2 === 0 ? (i + 1) * 5 : (i + 1) * 10,
+			discountName: discountNames[i], // Assign a unique name from the array
+			requiredPoints: requiredPoints,
+			discountType: discountType,
+			amount: amount,
+			// isDeleted will default to false as per schema, which is generally desired for seeded data
 			createdAt: createdAt,
 			updatedAt: updatedAt,
 		});
@@ -352,7 +371,7 @@ const generateSeedData = async (adminUser) => {
 				? handlerUsers[Math.floor(Math.random() * handlerUsers.length)]
 				: null;
 		const discount =
-			Math.random() > 0.4
+			Math.random() > 0.4 // 60% chance of no discount
 				? seed.discounts[
 						Math.floor(Math.random() * seed.discounts.length)
 				  ]
@@ -360,12 +379,12 @@ const generateSeedData = async (adminUser) => {
 
 		const orderServices = [];
 		let totalOrderPriceRaw = 0;
-		const numServicesInOrder = Math.floor(Math.random() * 3) + 1;
+		const numServicesInOrder = Math.floor(Math.random() * 3) + 1; // 1 to 3 services per order
 
 		for (let j = 0; j < numServicesInOrder; j++) {
 			const service =
 				seed.services[Math.floor(Math.random() * seed.services.length)];
-			const numberOfUnit = Math.floor(Math.random() * 5) + 1;
+			const numberOfUnit = Math.floor(Math.random() * 5) + 1; // 1 to 5 units per service
 			const totalPrice = service.servicePricePerUnit * numberOfUnit;
 			totalOrderPriceRaw += totalPrice;
 
@@ -434,6 +453,8 @@ const generateSeedData = async (adminUser) => {
 				? {
 						discountType: discount.discountType,
 						amount: discount.amount,
+						// Add discountName to discountInfo if it's relevant for orders
+						discountName: discount.discountName, // Include the new field
 				  }
 				: null,
 			services: orderServices,

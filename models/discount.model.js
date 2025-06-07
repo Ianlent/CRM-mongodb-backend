@@ -2,6 +2,12 @@ import mongoose from "mongoose";
 
 const discountSchema = new mongoose.Schema(
 	{
+		discountName: {
+			type: String,
+			required: true,
+			trim: true,
+			maxlength: 30,
+		},
 		requiredPoints: {
 			type: Number,
 			required: true,
