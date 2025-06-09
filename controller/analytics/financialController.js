@@ -57,18 +57,17 @@ export const getFinancialSummary = async (req, res) => {
 			startDate = new Date("1970-01-01T00:00:00Z"); // Epoch
 		}
 
-		// Aggregate daily revenue with detailed orders, based on completedOn date
+		// Aggregate daily revenue (without detailed orders)
 		const dailyRevenue = await Order.aggregate([
 			{
 				$match: {
 					orderStatus: "completed",
-					completedOn: { $gte: startDate, $lte: endDate }, // Changed to completedOn
+					completedOn: { $gte: startDate, $lte: endDate },
 					isDeleted: false,
 				},
 			},
 			{
 				$addFields: {
-					// Calculate gross total for the order by summing up service prices
 					orderGrossTotal: {
 						$reduce: {
 							input: "$services",
@@ -80,16 +79,15 @@ export const getFinancialSummary = async (req, res) => {
 			},
 			{
 				$addFields: {
-					// Apply discount to calculate net total
 					orderNetTotal: {
 						$cond: {
-							if: "$discountInfo", // Check if discountInfo exists
+							if: "$discountInfo",
 							then: {
 								$cond: {
 									if: {
 										$eq: [
-											"$discountInfo.discountType", // Check discount type
-											"percent", // If percentage-based
+											"$discountInfo.discountType",
+											"percent",
 										],
 									},
 									then: {
@@ -100,7 +98,7 @@ export const getFinancialSummary = async (req, res) => {
 													1,
 													{
 														$divide: [
-															"$discountInfo.amount", // Apply percentage
+															"$discountInfo.amount",
 															100,
 														],
 													},
@@ -109,15 +107,14 @@ export const getFinancialSummary = async (req, res) => {
 										],
 									},
 									else: {
-										// Fixed amount discount
 										$subtract: [
 											"$orderGrossTotal",
-											"$discountInfo.amount", // Subtract fixed amount
+											"$discountInfo.amount",
 										],
 									},
 								},
 							},
-							else: "$orderGrossTotal", // No discount
+							else: "$orderGrossTotal",
 						},
 					},
 				},
@@ -127,25 +124,19 @@ export const getFinancialSummary = async (req, res) => {
 					_id: {
 						$dateToString: {
 							format: "%Y-%m-%d",
-							date: "$completedOn", // Changed to completedOn
+							date: "$completedOn",
 						},
 					},
-					totalRevenue: { $sum: "$orderNetTotal" }, // Sum net order totals by date
-					orders: {
-						$push: {
-							_id: "$_id",
-							customerInfo: "$customerInfo", // Kept customer details
-							netTotal: "$orderNetTotal", // Kept net total
-						},
-					},
+					totalRevenue: { $sum: "$orderNetTotal" },
+					// Removed $push for orders here
 				},
 			},
 			{
-				$sort: { _id: 1 }, // Sort by date
+				$sort: { _id: 1 },
 			},
 		]);
 
-		// Aggregate daily expenses with detailed expenses
+		// Aggregate daily expenses (without detailed expenses)
 		const dailyExpenses = await Expense.aggregate([
 			{
 				$match: {
@@ -161,18 +152,12 @@ export const getFinancialSummary = async (req, res) => {
 							date: "$expenseDate",
 						},
 					},
-					totalExpenses: { $sum: "$amount" }, // Sum expense amounts by date
-					expenses: {
-						$push: {
-							_id: "$_id",
-							expenseDescription: "$expenseDescription",
-							amount: "$amount",
-						},
-					},
+					totalExpenses: { $sum: "$amount" },
+					// Removed $push for expenses here
 				},
 			},
 			{
-				$sort: { _id: 1 }, // Sort by date
+				$sort: { _id: 1 },
 			},
 		]);
 
@@ -185,9 +170,7 @@ export const getFinancialSummary = async (req, res) => {
 			financialSummary[rev._id] = {
 				date: rev._id,
 				revenue: rev.totalRevenue,
-				orders: rev.orders, // Store the orders array
 				expenses: 0, // Initialize expenses to 0
-				expenseDetails: [], // Initialize expense details array
 				profit: 0,
 				profitMargin: 0,
 			};
@@ -199,15 +182,12 @@ export const getFinancialSummary = async (req, res) => {
 				financialSummary[exp._id] = {
 					date: exp._id,
 					revenue: 0, // Initialize revenue to 0
-					orders: [], // Initialize orders array
 					expenses: exp.totalExpenses,
-					expenseDetails: exp.expenses, // Store the expenses array
 					profit: 0,
 					profitMargin: 0,
 				};
 			} else {
 				financialSummary[exp._id].expenses = exp.totalExpenses;
-				financialSummary[exp._id].expenseDetails = exp.expenses; // Store the expenses array
 			}
 			overallTotalExpenses += exp.totalExpenses;
 		});
@@ -235,7 +215,7 @@ export const getFinancialSummary = async (req, res) => {
 			success: true,
 			message: "Financial summary fetched successfully",
 			data: {
-				dailySummary: dailyResults,
+				dailySummary: dailyResults, // This array now only contains summary fields
 				overallTotals: {
 					totalRevenue: overallTotalRevenue,
 					totalExpenses: overallTotalExpenses,

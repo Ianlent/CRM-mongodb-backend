@@ -15,6 +15,20 @@ export const createExpenseValidation = [
 		.withMessage("Description can't be longer than 50 characters")
 		.trim()
 		.escape(),
+
+	body("expenseDate")
+		.exists()
+		.withMessage("Expense date is required")
+		.isISO8601()
+		.withMessage("Expense date must be a valid ISO 8601 date")
+		.custom((value) => {
+			const expenseDay = new Date(value);
+			const today = new Date().setHours(23, 59, 59, 999);
+			if (expenseDay > today) {
+				throw new Error("Expense date cannot be in the future");
+			}
+			return true;
+		}),
 ];
 
 export const updateExpenseValidation = [
@@ -26,7 +40,15 @@ export const updateExpenseValidation = [
 	body("expenseDate")
 		.optional()
 		.isISO8601()
-		.withMessage("Expense date must be a valid ISO 8601 date"),
+		.withMessage("Expense date must be a valid ISO 8601 date")
+		.custom((value) => {
+			const expenseDay = new Date(value);
+			const today = new Date().setHours(23, 59, 59, 999);
+			if (expenseDay > today) {
+				throw new Error("Expense date cannot be in the future");
+			}
+			return true;
+		}),
 
 	body("expenseDescription")
 		.optional()

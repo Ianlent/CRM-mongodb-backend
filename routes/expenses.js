@@ -3,9 +3,7 @@ import { handleValidationErrors } from "../middleware/handleValidationErrors.js"
 
 //controllers /////////////////////////////////////////////////////////
 import {
-	getAllExpenses,
-	getExpensesByDateRange,
-	getExpenseById,
+	getDailyExpenseDetailsForAnalytics,
 	createExpense,
 	updateExpenseByID,
 	deleteExpenseByID,
@@ -24,13 +22,7 @@ import authorizeRoles from "../middleware/auth/authorizeRoles.js";
 
 const router = express.Router();
 
-// GET
-router.get("/", getAllExpenses); //?page=1&limit=10
-
-router.get("/by-date-range", getExpensesByDateRange); //range?start=2025-04-01&end=2025-04-30
-
-router.get("/:id", validateIdParam, handleValidationErrors, getExpenseById);
-
+router.get("/", getDailyExpenseDetailsForAnalytics);
 // POST
 router.post(
 	"/",

@@ -1,142 +1,155 @@
 import Expense from "../models/expense.model.js"; // Import the Mongoose Expense model
 
-export const getAllExpenses = async (req, res) => {
+export const getDailyExpenseDetailsForAnalytics = async (req, res) => {
 	try {
-		const page = parseInt(req.query.page) || 1;
-		const limit = parseInt(req.query.limit) || 10;
-		const skip = (page - 1) * limit;
+		const { start, end, page = 1, limit = 10 } = req.query; // Add page and limit
 
-		// Find all non-deleted expenses with pagination
-		const expenses = await Expense.find({ isDeleted: false })
-			.sort({ expenseDate: -1 }) // Sort by expenseDate descending
-			.skip(skip)
-			.limit(limit)
-			.select("amount expenseDate expenseDescription"); // Select specific fields
+		// Convert to numbers
+		const pageNumber = parseInt(page, 10);
+		const limitNumber = parseInt(limit, 10);
+		const skip = (pageNumber - 1) * limitNumber;
 
-		// Get total count for pagination
-		const totalCount = await Expense.countDocuments({ isDeleted: false });
-
-		return res.status(200).json({
-			success: true,
-			data: expenses,
-			pagination: {
-				total_record: totalCount,
-				page: page,
-				limit: limit,
-				total_pages: Math.ceil(totalCount / limit), // Add total_pages for convenience
-			},
-		});
-	} catch (err) {
-		console.error(err.message);
-		return res
-			.status(500)
-			.json({ success: false, message: "Internal Server Error" });
-	}
-};
-
-export const getExpensesByDateRange = async (req, res) => {
-	let { start, end } = req.query;
-
-	if (!start && !end) {
-		return res.status(400).json({
-			success: false,
-			message: "Start or end date is required.",
-		});
-	}
-
-	let startDate = start ? new Date(start) : null;
-	let endDate = end ? new Date(end) : null;
-
-	if (
-		(startDate && isNaN(startDate.getTime())) ||
-		(endDate && isNaN(endDate.getTime()))
-	) {
-		return res
-			.status(400)
-			.json({ success: false, message: "Invalid date format." });
-	}
-
-	if (startDate && endDate && startDate > endDate) {
-		return res.status(400).json({
-			success: false,
-			message: "Start date cannot be after end date.",
-		});
-	}
-
-	// Adjust dates for full day range
-	if (startDate) startDate.setHours(0, 0, 0, 0);
-	if (endDate) endDate.setHours(23, 59, 59, 999);
-
-	// Default dates if only one is provided
-	if (startDate && !endDate) {
-		endDate = new Date(); // Today
-		endDate.setHours(23, 59, 59, 999);
-	}
-
-	if (!startDate && endDate) {
-		startDate = new Date("1970-01-01T00:00:00Z"); // Epoch
-	}
-
-	const query = {
-		isDeleted: false,
-		expenseDate: {
-			// Use Mongoose's date range query operators
-			...(startDate && { $gte: startDate }), // Greater than or equal to start date
-			...(endDate && { $lte: endDate }), // Less than or equal to end date
-		},
-	};
-
-	try {
-		const expenses = await Expense.find(query)
-			.sort({ expenseDate: -1 })
-			.select("amount expenseDate expenseDescription");
-
-		return res.status(200).json({ success: true, data: expenses });
-	} catch (err) {
-		console.error(err.message);
-		return res
-			.status(500)
-			.json({ success: false, message: "Internal Server Error" });
-	}
-};
-
-export const getExpenseById = async (req, res) => {
-	try {
-		const { id } = req.params;
-
-		// Find a single expense by its _id
-		const expense = await Expense.findOne({
-			_id: id,
-			isDeleted: false,
-		}).select("amount expenseDate expenseDescription");
-
-		if (!expense) {
-			// Mongoose returns null if no document is found
-			return res
-				.status(404)
-				.json({ success: false, message: "Expense not found" });
+		// Input validation and date adjustment (same as getFinancialSummary for consistency)
+		if (!start && !end) {
+			return res.status(400).json({
+				success: false,
+				message: "Start or end date is required.",
+			});
 		}
 
-		// Mongoose returns the document directly
-		return res.status(200).json({ success: true, data: expense });
-	} catch (err) {
-		console.error(err.message);
-		return res
-			.status(500)
-			.json({ success: false, message: "Internal Server Error" });
+		let startDate = start ? new Date(start) : null;
+		let endDate = end ? new Date(end) : null;
+
+		if (
+			(startDate && isNaN(startDate.getTime())) ||
+			(endDate && isNaN(endDate.getTime()))
+		) {
+			return res
+				.status(400)
+				.json({ success: false, message: "Invalid date format." });
+		}
+
+		if (startDate && endDate && startDate > endDate) {
+			return res.status(400).json({
+				success: false,
+				message: "Start date cannot be after end date.",
+			});
+		}
+
+		const currentDate = new Date();
+		currentDate.setHours(23, 59, 59, 999);
+
+		if (endDate && endDate > currentDate) {
+			return res.status(400).json({
+				success: false,
+				message: "End date cannot be in the future.",
+			});
+		}
+
+		if (startDate) startDate.setHours(0, 0, 0, 0);
+		if (endDate) endDate.setHours(23, 59, 59, 999);
+
+		if (startDate && !endDate) {
+			endDate = new Date();
+			endDate.setHours(23, 59, 59, 999);
+		}
+
+		if (!startDate && endDate) {
+			startDate = new Date("1970-01-01T00:00:00Z");
+		}
+
+		const result = await Expense.aggregate([
+			{
+				$match: {
+					expenseDate: { $gte: startDate, $lte: endDate },
+					isDeleted: false,
+				},
+			},
+			{
+				$facet: {
+					paginatedResults: [
+						// Grouping for pagination
+						{
+							$group: {
+								_id: {
+									$dateToString: {
+										format: "%Y-%m-%d",
+										date: "$expenseDate",
+									},
+								},
+								expenses: {
+									$push: {
+										_id: "$_id",
+										expenseDescription:
+											"$expenseDescription",
+										amount: "$amount",
+									},
+								},
+								dailyExpenses: { $sum: "$amount" },
+							},
+						},
+						{
+							$project: {
+								_id: 0,
+								date: "$_id",
+								totalExpenses: "$dailyExpenses",
+								expenses: 1,
+							},
+						},
+						{
+							$sort: { date: 1 },
+						},
+						{ $skip: skip },
+						{ $limit: limitNumber },
+					],
+					totalCount: [
+						// Count total documents after initial match, before pagination
+						{
+							$group: {
+								_id: {
+									$dateToString: {
+										format: "%Y-%m-%d",
+										date: "$expenseDate",
+									},
+								},
+							},
+						},
+						{ $count: "count" },
+					],
+				},
+			},
+		]);
+
+		const dailyExpenseDetails = result[0].paginatedResults;
+		const totalCount = result[0].totalCount[0]?.count || 0;
+
+		res.status(200).json({
+			success: true,
+			message: "Daily expense details fetched successfully",
+			data: dailyExpenseDetails,
+			totalCount: totalCount,
+			currentPage: pageNumber,
+			pageSize: limitNumber,
+			totalPages: Math.ceil(totalCount / limitNumber),
+		});
+	} catch (error) {
+		console.error("Error fetching daily expense details:", error);
+		res.status(500).json({
+			success: false,
+			message: "Server error",
+			error: error.message,
+		});
 	}
 };
-
 export const createExpense = async (req, res) => {
 	try {
-		const { amount, expenseDescription } = req.body; // Use camelCase
+		const { amount, expenseDescription, expenseDate } = req.body; // Use camelCase
 
 		// Create a new Expense document
 		const newExpense = new Expense({
 			amount,
-			expenseDescription: expenseDescription || null, // Mongoose handles null if not provided
-			// expenseDate defaults to now() as per schema
-			// isDeleted defaults to false as per schema
+			expenseDescription: expenseDescription || null,
+			expenseDate: expenseDate,
 		});
 
 		// Save the document to MongoDB

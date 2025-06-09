@@ -4,6 +4,7 @@ import { handleValidationErrors } from "../middleware/handleValidationErrors.js"
 // Controller functions
 import {
 	getAllOrders,
+	getDailyOrderDetailsForAnalytics,
 	getCurrentOrdersForHandler,
 	getOrderDetailsById,
 	createOrder,
@@ -89,6 +90,8 @@ router.use(authorizeRoles(["admin", "manager"]));
 
 // GET orders by date range
 router.get("/", handleValidationErrors, getAllOrders);
+
+router.get("/analytics/daily", getDailyOrderDetailsForAnalytics);
 
 // PUT update an order by ID (handler, discount, status, etc.)
 router.put(

@@ -8,6 +8,296 @@ import mongoose from "mongoose";
 // Dotenv should ideally be configured once in your main app entry point (e.g., index.js)
 // If MAGNIFICATION_FACTOR is used for calculation, ensure it's converted to a number.
 
+export const getDailyOrderDetailsForAnalytics = async (req, res) => {
+	try {
+		const { start, end, page = 1, limit = 10 } = req.query; // Add page and limit
+
+		// Convert to numbers
+		const pageNumber = parseInt(page, 10);
+		const limitNumber = parseInt(limit, 10);
+		const skip = (pageNumber - 1) * limitNumber;
+
+		// Input validation and date adjustment (same as getFinancialSummary for consistency)
+		if (!start && !end) {
+			return res.status(400).json({
+				success: false,
+				message: "Start or end date is required.",
+			});
+		}
+
+		let startDate = start ? new Date(start) : null;
+		let endDate = end ? new Date(end) : null;
+
+		if (
+			(startDate && isNaN(startDate.getTime())) ||
+			(endDate && isNaN(endDate.getTime()))
+		) {
+			return res
+				.status(400)
+				.json({ success: false, message: "Invalid date format." });
+		}
+
+		if (startDate && endDate && startDate > endDate) {
+			return res.status(400).json({
+				success: false,
+				message: "Start date cannot be after end date.",
+			});
+		}
+
+		const currentDate = new Date();
+		currentDate.setHours(23, 59, 59, 999);
+
+		if (endDate && endDate > currentDate) {
+			return res.status(400).json({
+				success: false,
+				message: "End date cannot be in the future.",
+			});
+		}
+
+		if (startDate) startDate.setHours(0, 0, 0, 0);
+		if (endDate) endDate.setHours(23, 59, 59, 999);
+
+		if (startDate && !endDate) {
+			endDate = new Date();
+			endDate.setHours(23, 59, 59, 999);
+		}
+
+		if (!startDate && endDate) {
+			startDate = new Date("1970-01-01T00:00:00Z");
+		}
+
+		const pipeline = [
+			{
+				$match: {
+					orderStatus: "completed",
+					completedOn: { $gte: startDate, $lte: endDate },
+					isDeleted: false,
+				},
+			},
+			{
+				$addFields: {
+					orderGrossTotal: {
+						$reduce: {
+							input: "$services",
+							initialValue: 0,
+							in: { $add: ["$$value", "$$this.totalPrice"] },
+						},
+					},
+				},
+			},
+			{
+				$addFields: {
+					orderNetTotal: {
+						$cond: {
+							if: "$discountInfo",
+							then: {
+								$cond: {
+									if: {
+										$eq: [
+											"$discountInfo.discountType",
+											"percent",
+										],
+									},
+									then: {
+										$multiply: [
+											"$orderGrossTotal",
+											{
+												$subtract: [
+													1,
+													{
+														$divide: [
+															"$discountInfo.amount",
+															100,
+														],
+													},
+												],
+											},
+										],
+									},
+									else: {
+										$subtract: [
+											"$orderGrossTotal",
+											"$discountInfo.amount",
+										],
+									},
+								},
+							},
+							else: "$orderGrossTotal",
+						},
+					},
+				},
+			},
+			{
+				$group: {
+					_id: {
+						$dateToString: {
+							format: "%Y-%m-%d",
+							date: "$completedOn",
+						},
+					},
+					orders: {
+						$push: {
+							_id: "$_id",
+							customerInfo: "$customerInfo",
+							netTotal: "$orderNetTotal",
+							// Add any other order fields you need to display
+						},
+					},
+					dailyRevenue: { $sum: "$orderNetTotal" },
+				},
+			},
+			{
+				$project: {
+					_id: 0,
+					date: "$_id",
+					revenue: "$dailyRevenue",
+					orders: 1,
+				},
+			},
+			{
+				$sort: { date: 1 },
+			},
+		];
+
+		// Use $facet to get total count and paginated results in one aggregation
+		const result = await Order.aggregate([
+			{
+				$match: {
+					orderStatus: "completed",
+					completedOn: { $gte: startDate, $lte: endDate },
+					isDeleted: false,
+				},
+			},
+			// Re-calculate orderNetTotal before grouping/facet for accurate totals/details
+			{
+				$addFields: {
+					orderGrossTotal: {
+						$reduce: {
+							input: "$services",
+							initialValue: 0,
+							in: { $add: ["$$value", "$$this.totalPrice"] },
+						},
+					},
+				},
+			},
+			{
+				$addFields: {
+					orderNetTotal: {
+						$cond: {
+							if: "$discountInfo",
+							then: {
+								$cond: {
+									if: {
+										$eq: [
+											"$discountInfo.discountType",
+											"percent",
+										],
+									},
+									then: {
+										$multiply: [
+											"$orderGrossTotal",
+											{
+												$subtract: [
+													1,
+													{
+														$divide: [
+															"$discountInfo.amount",
+															100,
+														],
+													},
+												],
+											},
+										],
+									},
+									else: {
+										$subtract: [
+											"$orderGrossTotal",
+											"$discountInfo.amount",
+										],
+									},
+								},
+							},
+							else: "$orderGrossTotal",
+						},
+					},
+				},
+			},
+			{
+				$facet: {
+					paginatedResults: [
+						// Grouping for pagination
+						{
+							$group: {
+								_id: {
+									$dateToString: {
+										format: "%Y-%m-%d",
+										date: "$completedOn",
+									},
+								},
+								orders: {
+									$push: {
+										_id: "$_id",
+										customerInfo: "$customerInfo",
+										netTotal: "$orderNetTotal",
+									},
+								},
+								dailyRevenue: { $sum: "$orderNetTotal" },
+							},
+						},
+						{
+							$project: {
+								_id: 0,
+								date: "$_id",
+								revenue: "$dailyRevenue",
+								orders: 1,
+							},
+						},
+						{
+							$sort: { date: 1 },
+						},
+						{ $skip: skip },
+						{ $limit: limitNumber },
+					],
+					totalCount: [
+						// Count total documents after initial match, before pagination
+						{
+							$group: {
+								_id: {
+									$dateToString: {
+										format: "%Y-%m-%d",
+										date: "$completedOn",
+									},
+								},
+							},
+						},
+						{ $count: "count" },
+					],
+				},
+			},
+		]);
+
+		const dailyOrderDetails = result[0].paginatedResults;
+		const totalCount = result[0].totalCount[0]?.count || 0;
+
+		res.status(200).json({
+			success: true,
+			message: "Daily order details fetched successfully",
+			data: dailyOrderDetails,
+			totalCount: totalCount,
+			currentPage: pageNumber,
+			pageSize: limitNumber,
+			totalPages: Math.ceil(totalCount / limitNumber),
+		});
+	} catch (error) {
+		console.error("Error fetching daily order details:", error);
+		res.status(500).json({
+			success: false,
+			message: "Server error",
+			error: error.message,
+		});
+	}
+};
+
 export const getCurrentOrdersForHandler = async (req, res) => {
 	const { handler_id } = req.params; // Note: req.params.handler_id is a string, convert to ObjectId if needed for direct comparison
 	const user_id = req.user?._id; // Access _id from the authenticated user object
