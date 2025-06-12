@@ -72,6 +72,7 @@ const discountInfoSubSchema = new mongoose.Schema(
 			enum: ["percent", "fixed"],
 			required: true,
 		},
+		discountName: { type: String, required: true },
 		amount: { type: Number, required: true, min: 1 },
 	},
 	{ _id: false }

@@ -66,99 +66,6 @@ export const getDailyOrderDetailsForAnalytics = async (req, res) => {
 			startDate = new Date("1970-01-01T00:00:00Z");
 		}
 
-		const pipeline = [
-			{
-				$match: {
-					orderStatus: "completed",
-					completedOn: { $gte: startDate, $lte: endDate },
-					isDeleted: false,
-				},
-			},
-			{
-				$addFields: {
-					orderGrossTotal: {
-						$reduce: {
-							input: "$services",
-							initialValue: 0,
-							in: { $add: ["$$value", "$$this.totalPrice"] },
-						},
-					},
-				},
-			},
-			{
-				$addFields: {
-					orderNetTotal: {
-						$cond: {
-							if: "$discountInfo",
-							then: {
-								$cond: {
-									if: {
-										$eq: [
-											"$discountInfo.discountType",
-											"percent",
-										],
-									},
-									then: {
-										$multiply: [
-											"$orderGrossTotal",
-											{
-												$subtract: [
-													1,
-													{
-														$divide: [
-															"$discountInfo.amount",
-															100,
-														],
-													},
-												],
-											},
-										],
-									},
-									else: {
-										$subtract: [
-											"$orderGrossTotal",
-											"$discountInfo.amount",
-										],
-									},
-								},
-							},
-							else: "$orderGrossTotal",
-						},
-					},
-				},
-			},
-			{
-				$group: {
-					_id: {
-						$dateToString: {
-							format: "%Y-%m-%d",
-							date: "$completedOn",
-						},
-					},
-					orders: {
-						$push: {
-							_id: "$_id",
-							customerInfo: "$customerInfo",
-							netTotal: "$orderNetTotal",
-							// Add any other order fields you need to display
-						},
-					},
-					dailyRevenue: { $sum: "$orderNetTotal" },
-				},
-			},
-			{
-				$project: {
-					_id: 0,
-					date: "$_id",
-					revenue: "$dailyRevenue",
-					orders: 1,
-				},
-			},
-			{
-				$sort: { date: 1 },
-			},
-		];
-
 		// Use $facet to get total count and paginated results in one aggregation
 		const result = await Order.aggregate([
 			{
@@ -253,7 +160,7 @@ export const getDailyOrderDetailsForAnalytics = async (req, res) => {
 							},
 						},
 						{
-							$sort: { date: 1 },
+							$sort: { date: -1 },
 						},
 						{ $skip: skip },
 						{ $limit: limitNumber },
@@ -381,115 +288,122 @@ export const getCurrentOrdersForHandler = async (req, res) => {
 
 export const getAllOrders = async (req, res) => {
 	try {
-		const { start, end, page = 1, limit = 10 } = req.query;
+		const { date, page = 1, limit = 10 } = req.query;
 
 		const parsedLimit = parseInt(limit);
 		const parsedPage = parseInt(page);
 		const skip = (parsedPage - 1) * parsedLimit;
-		// Input validation for dates
 
-		let startDate = start ? new Date(start) : null;
-		let endDate = end ? new Date(end) : null;
+		// Input validation for the single date
+		let targetDate = date ? new Date(date) : null;
 
-		if (
-			(startDate && isNaN(startDate.getTime())) ||
-			(endDate && isNaN(endDate.getTime()))
-		) {
-			return res
-				.status(400)
-				.json({ success: false, message: "Invalid date format." });
-		}
-
-		if (startDate && endDate && startDate > endDate) {
+		if (!targetDate || isNaN(targetDate.getTime())) {
 			return res.status(400).json({
 				success: false,
-				message: "Start date cannot be after end date.",
+				message: "Invalid or missing date parameter.",
 			});
 		}
 
-		// Prevent end date from being in the future relative to the current date
+		// Set the start and end of the target date to cover the full day
+		const startOfDay = new Date(targetDate);
+		startOfDay.setHours(0, 0, 0, 0);
+
+		const endOfDay = new Date(targetDate);
+		endOfDay.setHours(23, 59, 59, 999);
+
+		// Prevent target date from being in the future relative to the current date
 		const currentDate = new Date();
 		currentDate.setHours(23, 59, 59, 999); // Set to end of current day for comparison
 
-		if (endDate && endDate > currentDate) {
+		if (endOfDay > currentDate) {
 			return res.status(400).json({
 				success: false,
-				message: "End date cannot be in the future.",
+				message: "Date cannot be in the future.",
 			});
 		}
-
-		// Adjust dates for full day range
-		if (startDate) startDate.setHours(0, 0, 0, 0);
-		if (endDate) endDate.setHours(23, 59, 59, 999);
-
-		// Default dates if only one is provided (or if none and you want a default range)
-		// For general 'getAllOrders', if no dates are provided, we'll fetch all non-deleted.
-		// If only one is provided, we default the other end of the range.
-		if (startDate && !endDate) {
-			endDate = new Date(); // Default end to today
-			endDate.setHours(23, 59, 59, 999);
-		}
-
-		if (!startDate && endDate) {
-			startDate = new Date("1970-01-01T00:00:00Z"); // Default start to epoch
-		}
-		// --- End of your provided date input handling snippet ---
 
 		// Base match for filtering out soft-deleted orders
 		let matchStage = { isDeleted: false };
 
-		// Add date range filtering to the match stage if dates are present
-		if (startDate && endDate) {
-			// Apply date filter only if both are set (after defaults)
-			matchStage.orderDate = {
-				$gte: startDate,
-				$lte: endDate,
-			};
-		} else if (startDate) {
-			// If only startDate is provided after defaults
-			matchStage.orderDate = { $gte: startDate };
-		} else if (endDate) {
-			// If only endDate is provided after defaults
-			matchStage.orderDate = { $lte: endDate };
-		}
+		// Add date filtering for the single target date
+		matchStage.orderDate = {
+			$gte: startOfDay,
+			$lte: endOfDay,
+		};
 
-		// Aggregation pipeline
+		// Aggregation pipeline for daily summary
 		const pipeline = [
-			{ $match: matchStage }, // Apply initial filters including date range
-			{ $sort: { orderDate: -1 } }, // Sort by order_date DESC
+			{ $match: matchStage }, // 1. Apply initial filters including the single date
+			{
+				$group: {
+					// 2. Group by the single date
+					_id: {
+						$dateToString: {
+							format: "%Y-%m-%d",
+							date: "$orderDate",
+						},
+					},
+					orders: {
+						$push: {
+							orderId: "$_id",
+							customerId: "$customerId",
+							customerInfo: "$customerInfo",
+							orderDate: "$orderDate",
+							handlerId: "$handlerId",
+							handlerInfo: "$handlerInfo",
+							orderStatus: "$orderStatus",
+							discountId: "$discountId",
+							discountInfo: "$discountInfo",
+							services: "$services",
+							completedOn: "$completedOn",
+							// Calculate total_order_price for each order within the array
+							total_order_price: { $sum: "$services.totalPrice" }, // This might be an issue.
+							// To sum totalPrice for each order, you'd typically need to unwind services first.
+							// If services is an array of objects with a totalPrice field, you can sum them like this:
+							// total_order_price: { $sum: "$services.totalPrice" },
+							// If 'services' itself has a 'totalPrice' directly (which seems less likely for a services array),
+							// then the current approach would work.
+							// Assuming 'services' is an array of objects, and each object has a 'totalPrice':
+							// To correctly sum services.totalPrice for each individual order *before* grouping,
+							// you'd typically calculate it in a $addFields stage before the $group.
+							// For simplicity, if total_order_price is a field already present in the order document, use that.
+							// If not, and you want to calculate it from the 'services' array for each order,
+							// you'd need an $addFields stage before $group or adjust how totalPrice is stored.
+							// For this specific aggregation, assuming "total_order_price" is a calculated field
+							// that you want to include for each order being pushed. If "$services.totalPrice"
+							// correctly sums up prices within the 'services' array for a single order, keep it.
+							// Otherwise, consider if 'total_order_price' should be a field directly on the Order model
+							// or calculated differently.
+						},
+					},
+				},
+			},
+			{ $sort: { _id: -1 } }, // 3. Sort daily summaries by date DESC (will only have one date in this case)
 			{
 				$project: {
-					// Select and rename fields, calculate total price
-					_id: 0, // Exclude _id from the root document as it will be orderId
-					orderId: "$_id",
-					customerId: "$customerId",
-					customerInfo: "$customerInfo", // Embedded customer details
-					orderDate: "$orderDate",
-					handlerId: "$handlerId",
-					handlerInfo: "$handlerInfo", // Embedded handler details
-					orderStatus: "$orderStatus",
-					discountId: "$discountId",
-					discountInfo: "$discountInfo", // Embedded discount details
-					services: "$services", // Keep embedded services for client if needed
-					// Calculate total_order_price using $sum on services.totalPrice array
-					total_order_price: { $sum: "$services.totalPrice" },
+					// 4. Reshape the output
+					_id: 0, // Exclude the default _id from group
+					date: "$_id",
+					orders: 1,
 				},
 			},
 		];
 
-		// Execute aggregation for paginated orders
-		const orders = await Order.aggregate([
-			...pipeline, // Include the base pipeline
-			{ $skip: skip }, // Pagination
-			{ $limit: parsedLimit }, // Pagination
-		]);
+		// Execute aggregation for daily summarized orders
+		const dailyOrders = await Order.aggregate(pipeline);
 
-		// Count total documents matching the filters (including date range)
-		const totalCount = await Order.countDocuments(matchStage); // Use the same matchStage for counting
+		// totalCount will be the number of daily summaries (should be 0 or 1 in this case)
+		const totalCount = dailyOrders.length;
+
+		// Apply pagination to the daily summaries (even if only one, it still applies)
+		const paginatedDailyOrders = dailyOrders.slice(
+			skip,
+			skip + parsedLimit
+		);
 
 		return res.status(200).json({
 			success: true,
-			data: orders,
+			data: paginatedDailyOrders,
 			pagination: {
 				total_records: totalCount,
 				page: parsedPage,
@@ -550,7 +464,6 @@ export const getOrderDetailsById = async (req, res) => {
 export const createOrder = async (req, res) => {
 	const { customerId, handlerId, discountId, services } = req.body;
 	const user = req.user;
-
 	try {
 		// 1. Validate incoming IDs and fetch necessary data
 		if (!mongoose.Types.ObjectId.isValid(customerId)) {
@@ -661,6 +574,7 @@ export const createOrder = async (req, res) => {
 			discountInfo: discount
 				? {
 						discountType: discount.discountType,
+						discountName: discount.discountName,
 						amount: discount.amount,
 				  }
 				: null,
@@ -788,7 +702,7 @@ export const updateOrderStatus = async (req, res) => {
 export const updateOrderByID = async (req, res) => {
 	try {
 		const { id } = req.params;
-		const { orderStatus, handlerId, discountId } = req.body; // Use camelCase
+		const { orderStatus, handlerId } = req.body; // Use camelCase
 
 		if (!mongoose.Types.ObjectId.isValid(id)) {
 			return res
@@ -851,37 +765,6 @@ export const updateOrderByID = async (req, res) => {
 			updateFields.handlerId = handler ? handler._id : null;
 			updateFields.handlerInfo = handler
 				? { username: handler.username, userRole: handler.userRole }
-				: null;
-		}
-		if (discountId !== undefined) {
-			// Allow null to reset discount
-			// Validate discountId if present and not null
-			if (discountId && !mongoose.Types.ObjectId.isValid(discountId)) {
-				return res.status(400).json({
-					success: false,
-					message: "Invalid discount ID format.",
-				});
-			}
-			// Fetch discount info for embedding
-			let discount = null;
-			if (discountId) {
-				discount = await Discount.findById(discountId).select(
-					"discountType amount"
-				);
-				if (!discount || discount.isDeleted) {
-					// Assuming isDeleted for Discount is checked
-					return res.status(404).json({
-						success: false,
-						message: "Discount not found or deleted.",
-					});
-				}
-			}
-			updateFields.discountId = discount ? discount._id : null;
-			updateFields.discountInfo = discount
-				? {
-						discountType: discount.discountType,
-						amount: discount.amount,
-				  }
 				: null;
 		}
 
@@ -954,7 +837,7 @@ export const addServiceToOrder = async (req, res) => {
 	const { order_id } = req.params; // order_id from params, use camelCase for internal use
 	const { numberOfUnit, serviceId } = req.body; // use camelCase
 	const userRole = req.user?.userRole;
-	const userId = req.user?._id;
+	let userId = req.user?._id;
 
 	try {
 		if (!mongoose.Types.ObjectId.isValid(order_id)) {
@@ -966,6 +849,17 @@ export const addServiceToOrder = async (req, res) => {
 			throw new Error("Invalid service ID format.");
 		}
 		const serviceObjectId = new mongoose.Types.ObjectId(serviceId);
+
+		// 0. Convert user ID to ObjectId
+		if (!userId) {
+			throw new Error(
+				"User ID not found in request. Authentication required."
+			);
+		}
+		if (!mongoose.Types.ObjectId.isValid(userId)) {
+			throw new Error("Invalid user ID format.");
+		}
+		userId = new mongoose.Types.ObjectId(userId);
 
 		// 1. Check if order exists and is not deleted
 		const order = await Order.findById(orderObjectId);
@@ -1002,29 +896,43 @@ export const addServiceToOrder = async (req, res) => {
 		}
 
 		// 5. Check if service is a duplicate in the order
-		const isDuplicate = order.services.some((svc) =>
+		const serviceIndex = order.services.findIndex((svc) =>
 			svc.serviceId.equals(serviceObjectId)
 		);
-		if (isDuplicate) {
-			throw new Error("Service is already added to order.");
+
+		if (serviceIndex !== -1) {
+			// Service is a duplicate, update its quantity and total price
+			const existingService = order.services[serviceIndex];
+			existingService.numberOfUnit += numberOfUnit; // Add the new quantity
+			existingService.totalPrice =
+				existingService.numberOfUnit * existingService.pricePerUnit; // Recalculate total price
+
+			await order.save(); // Save the updated order document
+
+			return res
+				.status(200) // Use 200 for successful update
+				.json({
+					success: true,
+					message: "Service quantity updated in order",
+				});
+		} else {
+			// Service is not a duplicate, add it to the embedded array
+			const totalPrice = numberOfUnit * serviceDoc.servicePricePerUnit;
+			order.services.push({
+				serviceId: serviceDoc._id,
+				serviceName: serviceDoc.serviceName,
+				serviceUnit: serviceDoc.serviceUnit,
+				pricePerUnit: serviceDoc.servicePricePerUnit,
+				numberOfUnit: numberOfUnit,
+				totalPrice: totalPrice,
+			});
+
+			await order.save(); // Save the updated order document
+
+			return res
+				.status(201)
+				.json({ success: true, message: "Service added to order" });
 		}
-
-		// 6. Add service to the embedded array
-		const totalPrice = numberOfUnit * serviceDoc.servicePricePerUnit;
-		order.services.push({
-			serviceId: serviceDoc._id,
-			serviceName: serviceDoc.serviceName,
-			serviceUnit: serviceDoc.serviceUnit,
-			pricePerUnit: serviceDoc.servicePricePerUnit,
-			numberOfUnit: numberOfUnit,
-			totalPrice: totalPrice,
-		});
-
-		await order.save(); // Save the updated order document
-
-		return res
-			.status(201)
-			.json({ success: true, message: "Service added to order" });
 	} catch (err) {
 		console.error("Error adding service to order:", err);
 		return res.status(500).json({
@@ -1039,7 +947,7 @@ export const updateOrderService = async (req, res) => {
 	const { order_id, service_id } = req.params; // use camelCase for internal use
 	const { numberOfUnit } = req.body; // use camelCase
 	const userRole = req.user?.userRole;
-	const userId = req.user?._id;
+	let userId = req.user?._id;
 
 	try {
 		if (!mongoose.Types.ObjectId.isValid(order_id)) {
@@ -1058,6 +966,15 @@ export const updateOrderService = async (req, res) => {
 			throw new Error("Order not found or is deleted.");
 		}
 
+		if (!userId) {
+			throw new Error(
+				"User ID not found in request. Authentication required."
+			);
+		}
+		if (!mongoose.Types.ObjectId.isValid(userId)) {
+			throw new Error("Invalid user ID format.");
+		}
+		userId = new mongoose.Types.ObjectId(userId);
 		// 2. Check if handler is the same as user (and if handlerId exists on the order)
 		if (
 			order.handlerId &&
@@ -1112,7 +1029,7 @@ export const updateOrderService = async (req, res) => {
 export const removeServiceFromOrder = async (req, res) => {
 	const { order_id, service_id } = req.params; // use camelCase for internal use
 	const userRole = req.user?.userRole;
-	const userId = req.user?._id;
+	let userId = req.user?._id;
 
 	try {
 		if (!mongoose.Types.ObjectId.isValid(order_id)) {
@@ -1124,6 +1041,17 @@ export const removeServiceFromOrder = async (req, res) => {
 			throw new Error("Invalid service ID format.");
 		}
 		const serviceObjectId = new mongoose.Types.ObjectId(service_id);
+
+		// 0. Convert user_id to ObjectId
+		if (!userId) {
+			throw new Error(
+				"User ID not found in request. Authentication required."
+			);
+		}
+		if (!mongoose.Types.ObjectId.isValid(userId)) {
+			throw new Error("Invalid user ID format.");
+		}
+		userId = new mongoose.Types.ObjectId(userId);
 
 		// 1. Check if order exists and is not deleted
 		const order = await Order.findById(orderObjectId);

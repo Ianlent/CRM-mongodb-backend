@@ -97,7 +97,7 @@ export const getDailyExpenseDetailsForAnalytics = async (req, res) => {
 							},
 						},
 						{
-							$sort: { date: 1 },
+							$sort: { date: -1 },
 						},
 						{ $skip: skip },
 						{ $limit: limitNumber },

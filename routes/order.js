@@ -35,7 +35,7 @@ const router = express.Router();
 // GET a specific order by ID
 router.get(
 	"/:id",
-	validateIdParam, // Apply specific validation for this route
+	validateIdParam,
 	handleValidationErrors,
 	getOrderDetailsById
 );
@@ -89,7 +89,7 @@ router.delete(
 router.use(authorizeRoles(["admin", "manager"]));
 
 // GET orders by date range
-router.get("/", handleValidationErrors, getAllOrders);
+router.get("/", handleValidationErrors, getAllOrders); //?start=2025-04-01&end=2025-04-30&page=1&limit=10
 
 router.get("/analytics/daily", getDailyOrderDetailsForAnalytics);
 
