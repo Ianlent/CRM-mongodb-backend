@@ -13,8 +13,11 @@ import Order from "./models/order.model.js";
 
 dotenv.config(); // Load environment variables from .env file
 
+const MONGODB_URI =
+	process.env.MODE === "production"
+		? process.env.MONGO_URI_PROD
+		: process.env.MONGO_URI_DEV;
 // --- Configuration ---
-const MONGODB_URI = process.env.MONGO_URI_DEV;
 const CLEAR_EXISTING_DATA = true; // Set to true to clear all collections before seeding
 
 // --- Define date boundaries (May 1st, 2025, to today) ---
