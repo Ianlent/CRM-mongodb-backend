@@ -48,9 +48,7 @@ const startServer = async () => {
 	try {
 		await connectDB(); // Connect to MongoDB
 		app.listen(process.env.PORT, () => {
-			console.log(
-				`Backend running on http://localhost:${process.env.PORT}`
-			);
+			console.log(`Backend running on port ${process.env.PORT}`);
 		});
 	} catch (error) {
 		console.error(

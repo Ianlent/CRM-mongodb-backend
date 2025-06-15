@@ -511,25 +511,6 @@ export const createOrder = async (req, res) => {
 			};
 		}
 
-		let discount = null;
-		if (discountId) {
-			if (!mongoose.Types.ObjectId.isValid(discountId)) {
-				throw new Error("Invalid discount ID format.");
-			}
-			discount = await Discount.findById(discountId); // Removed .session(session)
-			if (!discount || discount.isDeleted) {
-				throw new Error("Discount not found or deleted.");
-			}
-
-			if (customer.points < discount.requiredPoints) {
-				throw new Error(
-					"Customer does not have enough points for discount."
-				);
-			}
-			customer.points -= discount.requiredPoints;
-			await customer.save(); // Removed { session }
-		}
-
 		const embeddedServices = [];
 		let subtotal = 0;
 
@@ -560,6 +541,41 @@ export const createOrder = async (req, res) => {
 			});
 		}
 
+		let discount = null;
+		if (discountId) {
+			if (!mongoose.Types.ObjectId.isValid(discountId)) {
+				throw new Error("Invalid discount ID format.");
+			}
+			discount = await Discount.findById(discountId); // Removed .session(session)
+			if (!discount || discount.isDeleted) {
+				throw new Error("Discount not found or deleted.");
+			}
+
+			if (customer.points < discount.requiredPoints) {
+				throw new Error(
+					"Customer does not have enough points for discount."
+				);
+			}
+			customer.points -= discount.requiredPoints;
+			await customer.save(); // Removed { session }
+		}
+
+		let totalOrderPrice = subtotal;
+		if (discount) {
+			if (discount.discountType === "percent") {
+				totalOrderPrice = subtotal * (1 - discount.amount / 100);
+			} else if (discount.discountType === "fixed") {
+				totalOrderPrice = subtotal - discount.amount;
+			}
+
+			if (totalOrderPrice < 0) {
+				return res.status(400).json({
+					success: false,
+					message: "Discount amount exceeds the total order price.",
+				});
+			}
+		}
+
 		const newOrder = new Order({
 			customerId: customer._id,
 			customerInfo: {
@@ -581,19 +597,6 @@ export const createOrder = async (req, res) => {
 			services: embeddedServices,
 			orderStatus: "pending",
 		});
-
-		let totalOrderPrice = subtotal;
-		if (discount) {
-			if (discount.discountType === "percent") {
-				totalOrderPrice = subtotal * (1 - discount.amount / 100);
-			} else if (discount.discountType === "fixed") {
-				totalOrderPrice = subtotal - discount.amount;
-			}
-
-			if (totalOrderPrice < 0) {
-				totalOrderPrice = 0;
-			}
-		}
 
 		const savedOrder = await newOrder.save();
 
